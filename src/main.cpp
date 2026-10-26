@@ -1228,9 +1228,21 @@ public:
             D2D1_RECT_F blocksClip = D2D1::RectF(px, py + 2.0f, px + pw, inputY - 8.0f);
             renderer.pRenderTarget->PushAxisAlignedClip(blocksClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
+            float blockColsW = (std::max)(100.0f, blockW - 24.0f);
+            float cwBlk = (renderer.charWidth > 1.0f) ? renderer.charWidth : 8.0f;
+            int maxBlkCols = (std::max)(20, static_cast<int>(blockColsW / cwBlk));
+
             for (auto& blk : pane.blocks) {
                 float startY = curY;
-                float contentH = blk->outputLines.size() * renderer.lineHeight + 40.0f;
+                std::vector<StyledLine> wrappedLines;
+                wrappedLines.reserve(blk->outputLines.size());
+                for (const auto& l : blk->outputLines) {
+                    auto wLines = WrapStyledLine(l, maxBlkCols);
+                    for (auto& wl : wLines) {
+                        wrappedLines.push_back(std::move(wl));
+                    }
+                }
+                float contentH = wrappedLines.size() * renderer.lineHeight + 40.0f;
                 blk->blockRect = D2D1::RectF(px + padding, startY, px + padding + blockW, startY + contentH);
 
                 renderer.pSolidBrush->SetColor(currentTheme.blockBg);
@@ -1241,7 +1253,7 @@ public:
                 renderer.DrawText(blk->commandText, px + padding + 10.0f, curY + 6.0f, currentTheme.textPrimary, renderer.pTextFormatBold);
                 curY += 28.0f;
 
-                for (const auto& l : blk->outputLines) {
+                for (const auto& l : wrappedLines) {
                     renderer.DrawText(l.rawText, px + padding + 12.0f, curY, currentTheme.textPrimary, renderer.pTextFormat);
                     curY += renderer.lineHeight;
                 }

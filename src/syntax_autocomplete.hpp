@@ -74,8 +74,8 @@ public:
             }
         }
 
-        // 2. Search local files and directories in cwd
-        if (!cwd.empty()) {
+        // 2. Search local files and directories in cwd (only for single tokens without spaces or pipes)
+        if (!cwd.empty() && input.find(L' ') == std::wstring::npos && input.find(L'|') == std::wstring::npos && input.find(L';') == std::wstring::npos) {
             std::wstring searchPattern = cwd;
             if (searchPattern.back() != L'\\' && searchPattern.back() != L'/') {
                 searchPattern += L"\\";
@@ -136,7 +136,8 @@ public:
             L"get-process", L"get-service", L"get-childitem", L"get-content",
             L"set-location", L"new-item", L"remove-item", L"copy-item", L"move-item",
             L"invoke-webrequest", L"invoke-restmethod", L"start-process", L"stop-process",
-            L"clear-host", L"write-output", L"write-host", L"select-object", L"where-object"
+            L"clear-host", L"write-output", L"write-host", L"select-object", L"where-object",
+            L"irm", L"iex", L"iwr", L"curl", L"wget", L"sl", L"gci", L"gc", L"sc", L"ni", L"ri", L"mi", L"cpi"
         };
         for (const auto& p : pwList) {
             pwCmdlets.insert(ToLower(p));
@@ -487,12 +488,38 @@ public:
                 continue;
             }
 
+            // Shell Operators: |, ||, &, &&, ;, >, >>, <
+            if (input[idx] == L'|' || input[idx] == L'&' || input[idx] == L';' || input[idx] == L'>' || input[idx] == L'<') {
+                size_t start = idx;
+                wchar_t op = input[idx];
+                idx++;
+                if (idx < len && input[idx] == op && (op == L'|' || op == L'&' || op == L'>')) {
+                    idx++;
+                }
+                SyntaxToken tok;
+                tok.text = input.substr(start, idx - start);
+                tok.startCol = start;
+                tok.endCol = idx;
+                tok.color = theme.accent;
+                analysis.tokens.push_back(tok);
+                if (tok.text == L"|" || tok.text == L"||" || tok.text == L"&&" || tok.text == L";") {
+                    isFirstToken = true; // Next word is a command
+                }
+                continue;
+            }
+
             // Word token
             size_t start = idx;
-            while (idx < len && !iswspace(input[idx]) && input[idx] != L'\"' && input[idx] != L'\'' && input[idx] != L'|' && input[idx] != L';') {
+            while (idx < len && !iswspace(input[idx]) && input[idx] != L'\"' && input[idx] != L'\'' &&
+                   input[idx] != L'|' && input[idx] != L'&' && input[idx] != L';' && input[idx] != L'>' && input[idx] != L'<') {
+                idx++;
+            }
+            if (idx == start) {
+                // Safeguard against zero-advance loop
                 idx++;
             }
             std::wstring word = input.substr(start, idx - start);
+            if (word.empty()) continue;
 
             SyntaxToken tok;
             tok.text = word;
@@ -529,7 +556,7 @@ public:
                     if (word == L"|" || word == L"&&" || word == L"||") {
                         isFirstToken = true; // Next word is a command
                     }
-                } else if (iswdigit(word[0])) {
+                } else if (!word.empty() && iswdigit(word[0])) {
                     tok.color = theme.syntaxNumber;
                 } else if (firstCommand == L"git" && gitSubcommands.count(ToLower(word)) > 0) {
                     tok.color = theme.syntaxKeyword;

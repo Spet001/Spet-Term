@@ -513,4 +513,115 @@ inline std::vector<DetectedLink> FindLinksInText(const std::wstring& text) {
     return links;
 }
 
+inline std::vector<StyledLine> WrapStyledLine(const StyledLine& line, int maxCols) {
+    if (maxCols <= 10) maxCols = 10;
+
+    if (static_cast<int>(line.rawText.size()) <= maxCols) {
+        if (!line.spans.empty() || line.rawText.empty()) {
+            return { line };
+        }
+        StyledLine sl = line;
+        sl.spans.push_back({ sl.rawText, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) });
+        return { sl };
+    }
+
+    struct SpanInterval {
+        size_t start;
+        size_t end;
+        const StyledSpan* ptr;
+    };
+    std::vector<SpanInterval> intervals;
+    intervals.reserve(line.spans.size());
+    size_t spanOffset = 0;
+    for (const auto& span : line.spans) {
+        size_t len = span.text.size();
+        intervals.push_back({ spanOffset, spanOffset + len, &span });
+        spanOffset += len;
+    }
+
+    std::vector<StyledLine> result;
+    const std::wstring& text = line.rawText;
+    const size_t totalLen = text.size();
+    size_t curIdx = 0;
+
+    while (curIdx < totalLen) {
+        size_t remaining = totalLen - curIdx;
+        if (static_cast<int>(remaining) <= maxCols) {
+            size_t sliceStart = curIdx;
+            size_t sliceEnd = totalLen;
+            StyledLine sub;
+            sub.rawText = text.substr(sliceStart, sliceEnd - sliceStart);
+            for (const auto& itv : intervals) {
+                size_t interStart = (std::max)(itv.start, sliceStart);
+                size_t interEnd = (std::min)(itv.end, sliceEnd);
+                if (interStart < interEnd) {
+                    StyledSpan sp = *itv.ptr;
+                    sp.text = text.substr(interStart, interEnd - interStart);
+                    sub.spans.push_back(std::move(sp));
+                }
+            }
+            if (sub.spans.empty() && !sub.rawText.empty()) {
+                sub.spans.push_back({ sub.rawText, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) });
+            }
+            result.push_back(std::move(sub));
+            break;
+        }
+
+        size_t breakLimit = curIdx + maxCols;
+        size_t breakPos = std::wstring::npos;
+
+        for (size_t p = breakLimit; p > curIdx; --p) {
+            if (iswspace(text[p])) {
+                breakPos = p;
+                break;
+            }
+        }
+
+        size_t sliceStart = curIdx;
+        size_t sliceEnd = breakLimit;
+        size_t nextIdx = breakLimit;
+
+        if (breakPos != std::wstring::npos && breakPos > curIdx) {
+            sliceEnd = breakPos;
+            nextIdx = breakPos + 1;
+            while (sliceEnd > curIdx && text[sliceEnd - 1] == L' ') {
+                sliceEnd--;
+            }
+            while (nextIdx < totalLen && text[nextIdx] == L' ') {
+                nextIdx++;
+            }
+        } else {
+            sliceEnd = breakLimit;
+            nextIdx = breakLimit;
+        }
+
+        StyledLine sub;
+        sub.rawText = text.substr(sliceStart, sliceEnd - sliceStart);
+        for (const auto& itv : intervals) {
+            size_t interStart = (std::max)(itv.start, sliceStart);
+            size_t interEnd = (std::min)(itv.end, sliceEnd);
+            if (interStart < interEnd) {
+                StyledSpan sp = *itv.ptr;
+                sp.text = text.substr(interStart, interEnd - interStart);
+                sub.spans.push_back(std::move(sp));
+            }
+        }
+        if (sub.spans.empty() && !sub.rawText.empty()) {
+            sub.spans.push_back({ sub.rawText, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) });
+        }
+        result.push_back(std::move(sub));
+
+        if (nextIdx <= curIdx) {
+            curIdx++;
+        } else {
+            curIdx = nextIdx;
+        }
+    }
+
+    if (result.empty()) {
+        result.push_back(line);
+    }
+    return result;
+}
+
 } // namespace speta
