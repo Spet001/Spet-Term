@@ -1918,6 +1918,11 @@ public:
         if (ctrl && vk == 'V') {
             std::wstring clip = GetTextFromClipboard(hwnd);
             if (!clip.empty()) {
+                if (conPty.isCommandRunning.load() && conPty.currentRunningPaneId == pane.id) {
+                    conPty.SendInput(clip);
+                    Invalidate();
+                    return;
+                }
                 bool isMultiLine = (clip.find(L'\n') != std::wstring::npos || clip.find(L'\r') != std::wstring::npos);
                 if (isMultiLine) {
                     if (settings.warnMultiLinePaste) {
@@ -1933,6 +1938,71 @@ public:
                 pane.inputLine.insert(pane.cursorPos, clip);
                 pane.cursorPos += clip.size();
                 Invalidate();
+            }
+            return;
+        }
+
+        // Direct interactive ConPTY keyboard routing for active CLIs (agy, claude, etc.)
+        if (conPty.isCommandRunning.load() && conPty.currentRunningPaneId == pane.id) {
+            pane.autocompleteOpen = false;
+            if (vk == VK_UP) {
+                conPty.WriteInput("\x1b[A");
+                Invalidate();
+                return;
+            } else if (vk == VK_DOWN) {
+                conPty.WriteInput("\x1b[B");
+                Invalidate();
+                return;
+            } else if (vk == VK_RIGHT) {
+                conPty.WriteInput("\x1b[C");
+                Invalidate();
+                return;
+            } else if (vk == VK_LEFT) {
+                conPty.WriteInput("\x1b[D");
+                Invalidate();
+                return;
+            } else if (vk == VK_HOME) {
+                conPty.WriteInput("\x1b[H");
+                Invalidate();
+                return;
+            } else if (vk == VK_END) {
+                conPty.WriteInput("\x1b[F");
+                Invalidate();
+                return;
+            } else if (vk == VK_PRIOR) {
+                conPty.WriteInput("\x1b[5~");
+                Invalidate();
+                return;
+            } else if (vk == VK_NEXT) {
+                conPty.WriteInput("\x1b[6~");
+                Invalidate();
+                return;
+            } else if (vk == VK_TAB) {
+                conPty.WriteInput("\t");
+                Invalidate();
+                return;
+            } else if (vk == VK_ESCAPE) {
+                conPty.WriteInput("\x1b");
+                Invalidate();
+                return;
+            } else if (vk == VK_RETURN) {
+                conPty.WriteInput("\r\n");
+                pane.inputLine.clear();
+                pane.cursorPos = 0;
+                Invalidate();
+                return;
+            } else if (vk == VK_BACK) {
+                conPty.WriteInput("\x08");
+                if (pane.cursorPos > 0 && !pane.inputLine.empty()) {
+                    pane.inputLine.erase(pane.cursorPos - 1, 1);
+                    pane.cursorPos--;
+                }
+                Invalidate();
+                return;
+            } else if (vk == VK_DELETE) {
+                conPty.WriteInput("\x1b[3~");
+                Invalidate();
+                return;
             }
             return;
         }
@@ -2094,6 +2164,12 @@ public:
 
         if (c >= 32) {
             auto& pane = GetActivePane();
+            if (conPty.isCommandRunning.load() && conPty.currentRunningPaneId == pane.id) {
+                std::wstring s(1, c);
+                conPty.SendInput(s);
+                Invalidate();
+                return;
+            }
             pane.inputLine.insert(pane.cursorPos, 1, c);
             pane.cursorPos++;
             if (pane.autocompleteOpen) {
