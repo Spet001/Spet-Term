@@ -1,0 +1,52 @@
+{
+  "theme": "Galaxy",
+  "fontSize": 16.5,
+  "fontFamily": "Consolas",
+  "classicFlowMode": true,
+  "wallpaperPath": "C:\\Users\\josem\\Documents\\antigravity\\wonderful-salk\\assets\\wallpapers\\samples\\cafe.mp4",
+  "wallpaperDim": 32,
+  "wallpaperPauseUnfocused": false,
+  "wallpaperPauseOnBattery": true,
+  "customWallpapers": [
+  ],
+  "cursorStyle": 0,
+  "language": "auto",
+  "warmthLevel": 0,
+  "promptPosition": "bottom",
+  "systemCursor": false,
+  "statusBarVisible": true,
+  "warnMultiLinePaste": true,
+  "onboardingCompleted": true,
+  "snippets": [
+    {
+      "name": "Git: Commit & Push",
+      "command": "git add . && git commit -m \"update\" && git push",
+      "description": "Salva tudo e envia pro remoto"
+    },
+    {
+      "name": "Git: Undo Last Commit",
+      "command": "git reset --soft HEAD~1",
+      "description": "Desfaz commit mantendo arquivos no stage"
+    },
+    {
+      "name": "Processos: Top RAM",
+      "command": "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5",
+      "description": "Lista os 5 processos que mais usam memória"
+    },
+    {
+      "name": "Rede: Portas Abertas",
+      "command": "netstat -ano | findstr LISTENING",
+      "description": "Lista todas as portas TCP em escuta"
+    },
+    {
+      "name": "Build: Compilar C++",
+      "command": ".\\build.ps1",
+      "description": "Compila Spet@term com Clang++"
+    },
+    {
+      "name": "Limpeza: Cache Temp",
+      "command": "Remove-Item -Path \"$env:TEMP\\*\" -Recurse -Force -ErrorAction SilentlyContinue",
+      "description": "Libera espaço apagando temporários do Windows"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+# Build outputs and binaries
+*.exe
+*.res
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.dll
+*.exp
+
+# Intermediate directories and caches
+build/
+bin/
+obj/
+out/
+.agents/
+.omxterm/
+.vs/
+.vscode/
+.idea/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
