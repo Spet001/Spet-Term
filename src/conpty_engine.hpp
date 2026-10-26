@@ -83,12 +83,41 @@ public:
                             ParseSGR(paramStr);
                         } else if (finalChar == L'J') {
                             // Clear display
-                            if (paramStr == L"2" || paramStr.empty()) {
+                            if (paramStr == L"2" || paramStr.empty() || paramStr == L"3") {
                                 outLines.clear();
                                 currentLine = StyledLine();
                             }
                         } else if (finalChar == L'K') {
                             // Erase in line
+                            currentLine = StyledLine();
+                        } else if (finalChar == L'H' || finalChar == L'f') {
+                            // Cursor Position / Home: if 1;1 or empty, reset display
+                            if (paramStr.empty() || paramStr == L"1;1" || paramStr == L"H") {
+                                outLines.clear();
+                                currentLine = StyledLine();
+                            }
+                        } else if (finalChar == L'A') {
+                            // Cursor Up
+                            int count = 1;
+                            if (!paramStr.empty()) {
+                                try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
+                            }
+                            while (count > 0 && !outLines.empty()) {
+                                currentLine = outLines.back();
+                                outLines.pop_back();
+                                count--;
+                            }
+                        } else if (finalChar == L'B') {
+                            // Cursor Down
+                            int count = 1;
+                            if (!paramStr.empty()) {
+                                try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
+                            }
+                            while (count > 0) {
+                                outLines.push_back(currentLine);
+                                currentLine = StyledLine();
+                                count--;
+                            }
                         }
                         idx = seqEnd + 1;
                         continue;
@@ -184,6 +213,9 @@ public:
     void FlushCurrentLine(std::vector<StyledLine>& outLines) {
         outLines.push_back(currentLine);
         currentLine = StyledLine();
+        if (outLines.size() > 1000) {
+            outLines.erase(outLines.begin(), outLines.begin() + 100);
+        }
     }
 
 private:
@@ -336,6 +368,7 @@ class ConPtyEngine {
 public:
     std::mutex blockMutex;
     std::atomic<bool> isCommandRunning{ false };
+    std::atomic<bool> isStreamPending{ false };
     HANDLE hProcess = nullptr;
     HANDLE hStdInWrite = nullptr;
     HANDLE hJob = nullptr;
@@ -625,7 +658,7 @@ public:
                                 parser.Feed(std::string_view(buffer, bytesRead), pBlock->outputLines);
                                 activeParserCurrentLine = parser.currentLine;
                             }
-                            if (notifyHwnd) {
+                            if (notifyHwnd && !isStreamPending.exchange(true)) {
                                 PostMessageW(notifyHwnd, WM_USER + 101, static_cast<WPARAM>(paneId), 0);
                             }
                         }
@@ -793,7 +826,7 @@ public:
                     parser.Feed(std::string_view(buffer, bytesRead), pBlock->outputLines);
                     activeParserCurrentLine = parser.currentLine;
                 }
-                if (notifyHwnd) {
+                if (notifyHwnd && !isStreamPending.exchange(true)) {
                     PostMessageW(notifyHwnd, WM_USER + 101, static_cast<WPARAM>(paneId), 0);
                 }
             }

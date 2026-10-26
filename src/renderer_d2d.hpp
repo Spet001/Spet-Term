@@ -2259,25 +2259,28 @@ public:
                             }
                         }
 
-                        float spanX = streamX;
-                        for (const auto& span : line.spans) {
-                            IDWriteTextFormat* tf = span.bold ? pTermFormatBold : pTermFormat;
-                            DrawText(span.text, spanX, curY, span.fg, tf);
-                            spanX += MeasureStringWidth(span.text, tf);
-                        }
+                        float lineBottom = curY + lineHeight;
+                        if (lineBottom >= py - 4.0f && curY <= py + ph + 4.0f) {
+                            float spanX = streamX;
+                            for (const auto& span : line.spans) {
+                                IDWriteTextFormat* tf = span.bold ? pTermFormatBold : pTermFormat;
+                                DrawText(span.text, spanX, curY, span.fg, tf);
+                                spanX += MeasureStringWidth(span.text, tf);
+                            }
 
-                        // Detect Clickable URLs
-                        auto links = FindLinksInText(line.rawText);
-                        for (const auto& lk : links) {
-                            std::wstring beforeLk = line.rawText.substr(0, lk.startChar);
-                            float lkX = streamX + MeasureStringWidth(beforeLk, pTermFormat);
-                            float lkW = MeasureStringWidth(lk.url, pTermFormat);
-                            D2D1_RECT_F lkRect = D2D1::RectF(lkX, curY, lkX + lkW, curY + lineHeight);
-                            frameLinks.push_back({ lkRect, lk.url, lk.isUrl });
+                            // Detect Clickable URLs
+                            auto links = FindLinksInText(line.rawText);
+                            for (const auto& lk : links) {
+                                std::wstring beforeLk = line.rawText.substr(0, lk.startChar);
+                                float lkX = streamX + MeasureStringWidth(beforeLk, pTermFormat);
+                                float lkW = MeasureStringWidth(lk.url, pTermFormat);
+                                D2D1_RECT_F lkRect = D2D1::RectF(lkX, curY, lkX + lkW, curY + lineHeight);
+                                frameLinks.push_back({ lkRect, lk.url, lk.isUrl });
 
-                            if (PtInD2D1Rect(lkRect, mousePos) && isCtrlDown) {
-                                pSolidBrush->SetColor(theme.accent);
-                                pRenderTarget->DrawLine(D2D1::Point2F(lkX, curY + lineHeight - 2.0f), D2D1::Point2F(lkX + lkW, curY + lineHeight - 2.0f), pSolidBrush, 1.2f);
+                                if (PtInD2D1Rect(lkRect, mousePos) && isCtrlDown) {
+                                    pSolidBrush->SetColor(theme.accent);
+                                    pRenderTarget->DrawLine(D2D1::Point2F(lkX, curY + lineHeight - 2.0f), D2D1::Point2F(lkX + lkW, curY + lineHeight - 2.0f), pSolidBrush, 1.2f);
+                                }
                             }
                         }
 
@@ -2368,7 +2371,14 @@ public:
                     promptTag = (pane.activeRunningBlock->modeUsed == ShellMode::ModePW) ? L"PS " : L"";
                     runCmdText = pane.activeRunningBlock->commandText;
                     runWorkDir = pane.activeRunningBlock->workingDirectory;
-                    runLinesSnapshot = pane.activeRunningBlock->outputLines;
+                    const auto& srcLines = pane.activeRunningBlock->outputLines;
+                    size_t count = srcLines.size();
+                    size_t maxSnap = 150;
+                    size_t startI = (count > maxSnap) ? (count - maxSnap) : 0;
+                    runLinesSnapshot.reserve(count - startI + 1);
+                    for (size_t i = startI; i < count; ++i) {
+                        runLinesSnapshot.push_back(srcLines[i]);
+                    }
                     if (!activeCurrentLine.rawText.empty()) {
                         runLinesSnapshot.push_back(activeCurrentLine);
                     }
@@ -2402,11 +2412,14 @@ public:
             for (const auto& rawLine : runLinesSnapshot) {
                 std::vector<StyledLine> wrappedLines = WrapStyledLine(rawLine, maxRunCols);
                 for (const auto& line : wrappedLines) {
-                    float spanX = streamX;
-                    for (const auto& span : line.spans) {
-                        IDWriteTextFormat* tf = span.bold ? pTermFormatBold : pTermFormat;
-                        DrawText(span.text, spanX, curY, span.fg, tf);
-                        spanX += MeasureStringWidth(span.text, tf);
+                    float lineBottom = curY + lineHeight;
+                    if (lineBottom >= py - 4.0f && curY <= py + ph + 4.0f) {
+                        float spanX = streamX;
+                        for (const auto& span : line.spans) {
+                            IDWriteTextFormat* tf = span.bold ? pTermFormatBold : pTermFormat;
+                            DrawText(span.text, spanX, curY, span.fg, tf);
+                            spanX += MeasureStringWidth(span.text, tf);
+                        }
                     }
                     curY += lineHeight;
                 }

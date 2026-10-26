@@ -1981,6 +1981,10 @@ public:
                 conPty.WriteInput("\t");
                 Invalidate();
                 return;
+            } else if (vk == VK_SPACE) {
+                conPty.WriteInput(" ");
+                Invalidate();
+                return;
             } else if (vk == VK_ESCAPE) {
                 conPty.WriteInput("\x1b");
                 Invalidate();
@@ -4175,6 +4179,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_TERMINAL_STREAM:
         if (g_App) {
+            g_App->conPty.isStreamPending.store(false);
             int paneId = static_cast<int>(wParam);
             bool found = false;
             for (auto& tab : g_App->tabs) {
