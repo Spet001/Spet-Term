@@ -328,6 +328,10 @@ private:
     }
 };
 
+typedef HRESULT (WINAPI *PFN_CreatePseudoConsole)(COORD, HANDLE, HANDLE, DWORD, HPCON*);
+typedef void (WINAPI *PFN_ClosePseudoConsole)(HPCON);
+typedef HRESULT (WINAPI *PFN_ResizePseudoConsole)(HPCON, COORD);
+
 class ConPtyEngine {
 public:
     std::mutex blockMutex;
@@ -336,14 +340,50 @@ public:
     HANDLE hStdInWrite = nullptr;
     HANDLE hJob = nullptr;
     HANDLE hActiveReadPipe = nullptr;
+    HPCON hPC = nullptr;
+    PFN_CreatePseudoConsole pfnCreate = nullptr;
+    PFN_ClosePseudoConsole pfnClose = nullptr;
+    PFN_ResizePseudoConsole pfnResize = nullptr;
     StyledLine activeParserCurrentLine;
     std::thread workerThread;
     HWND notifyHwnd = nullptr;
     int currentRunningPaneId = 1;
 
-    ConPtyEngine() = default;
+    ConPtyEngine() {
+        HMODULE hKernel = GetModuleHandleW(L"kernel32.dll");
+        if (hKernel) {
+            pfnCreate = reinterpret_cast<PFN_CreatePseudoConsole>(GetProcAddress(hKernel, "CreatePseudoConsole"));
+            pfnClose = reinterpret_cast<PFN_ClosePseudoConsole>(GetProcAddress(hKernel, "ClosePseudoConsole"));
+            pfnResize = reinterpret_cast<PFN_ResizePseudoConsole>(GetProcAddress(hKernel, "ResizePseudoConsole"));
+        }
+    }
+
     ~ConPtyEngine() {
         CancelCurrentCommand();
+    }
+
+    static void EnsureFreshUserPath() {
+        HKEY hKey = nullptr;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            wchar_t regPath[8192] = {};
+            DWORD dataSize = sizeof(regPath);
+            DWORD type = 0;
+            if (RegQueryValueExW(hKey, L"Path", nullptr, &type, reinterpret_cast<LPBYTE>(regPath), &dataSize) == ERROR_SUCCESS) {
+                wchar_t curPath[32768] = {};
+                DWORD curLen = GetEnvironmentVariableW(L"PATH", curPath, 32768);
+                wchar_t expanded[8192] = {};
+                ExpandEnvironmentStringsW(regPath, expanded, 8192);
+                std::wstring expStr = expanded;
+                if (!expStr.empty() && curLen > 0) {
+                    std::wstring curStr = curPath;
+                    if (curStr.find(expStr) == std::wstring::npos) {
+                        std::wstring merged = expStr + L";" + curStr;
+                        SetEnvironmentVariableW(L"PATH", merged.c_str());
+                    }
+                }
+            }
+            RegCloseKey(hKey);
+        }
     }
 
     void SetNotificationWindow(HWND hwnd) {
@@ -353,6 +393,10 @@ public:
     void CancelCurrentCommand() {
         if (isCommandRunning.load()) {
             isCommandRunning.store(false);
+            if (hPC) {
+                if (pfnClose) pfnClose(hPC);
+                hPC = nullptr;
+            }
             if (hJob) {
                 TerminateJobObject(hJob, 1);
             }
@@ -401,7 +445,7 @@ public:
     static std::wstring BuildCommandLine(ShellMode mode, const std::wstring& cmd, bool hasPwsh = false) {
         if (mode == ShellMode::ModePW) {
             std::wstring pwExe = hasPwsh ? L"pwsh.exe" : L"powershell.exe";
-            return pwExe + L" -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + Base64EncodeUtf16(cmd);
+            return pwExe + L" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command " + cmd;
         } else {
             return L"cmd.exe /q /d /c " + cmd;
         }
@@ -435,38 +479,7 @@ public:
 
         workerThread = std::thread([this, cmd, mode, cwd, pBlock, theme, paneId]() {
             auto startTime = std::chrono::high_resolution_clock::now();
-
-            // Set up anonymous pipes for stdout/stderr and stdin
-            SECURITY_ATTRIBUTES sa;
-            sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-            sa.bInheritHandle = TRUE;
-            sa.lpSecurityDescriptor = nullptr;
-
-            HANDLE hReadPipe = nullptr;
-            HANDLE hWritePipe = nullptr;
-            if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
-                std::lock_guard<std::mutex> lock(blockMutex);
-                StyledLine sl;
-                sl.rawText = L"Falha ao criar pipes de execucao.";
-                sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
-                pBlock->outputLines.push_back(sl);
-                pBlock->isRunning = false;
-                pBlock->exitCode = 1;
-                isCommandRunning.store(false);
-                if (notifyHwnd) {
-                    PostMessageW(notifyHwnd, WM_USER + 102, static_cast<WPARAM>(paneId), 0);
-                }
-                return;
-            }
-            SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
-
-            HANDLE hInRead = nullptr;
-            HANDLE hInWrite = nullptr;
-            CreatePipe(&hInRead, &hInWrite, &sa, 0);
-            if (hInWrite) {
-                SetHandleInformation(hInWrite, HANDLE_FLAG_INHERIT, 0);
-                this->hStdInWrite = hInWrite;
-            }
+            EnsureFreshUserPath();
 
             // Construct shell command line (suppress logos, banners and warnings)
             std::wstring commandLine;
@@ -497,7 +510,7 @@ public:
                             fwrite(utf8.data(), 1, utf8.size(), f);
                             fclose(f);
                         }
-                        commandLine = pwExe + L" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + tempBatchFile + L"\"";
+                        commandLine = pwExe + L" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + tempBatchFile + L"\"";
                     } else {
                         commandLine = BuildCommandLine(mode, cmd, hasPwsh);
                     }
@@ -527,6 +540,176 @@ public:
                 } else {
                     commandLine = BuildCommandLine(mode, cmd, false);
                 }
+            }
+
+            // Path 1: Native Windows ConPTY (PseudoConsole) for interactive CLIs (agy, claude, python)
+            if (this->pfnCreate && this->pfnClose) {
+                HANDLE hInRead = nullptr, hInWrite = nullptr;
+                HANDLE hOutRead = nullptr, hOutWrite = nullptr;
+                CreatePipe(&hInRead, &hInWrite, nullptr, 0);
+                CreatePipe(&hOutRead, &hOutWrite, nullptr, 0);
+
+                COORD coord = { 120, 32 };
+                HPCON hPseudo = nullptr;
+                HRESULT hr = this->pfnCreate(coord, hInRead, hOutWrite, 0, &hPseudo);
+                if (SUCCEEDED(hr)) {
+                    this->hPC = hPseudo;
+                    this->hStdInWrite = hInWrite;
+                    this->hActiveReadPipe = hOutRead;
+
+                    CloseHandle(hInRead);
+                    CloseHandle(hOutWrite);
+
+                    SIZE_T attrSize = 0;
+                    InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
+                    std::vector<BYTE> attrList(attrSize);
+                    auto pAttr = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attrList.data());
+                    InitializeProcThreadAttributeList(pAttr, 1, 0, &attrSize);
+                    UpdateProcThreadAttribute(pAttr, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPseudo, sizeof(HPCON), nullptr, nullptr);
+
+                    STARTUPINFOEXW siex = {};
+                    siex.StartupInfo.cb = sizeof(STARTUPINFOEXW);
+                    siex.lpAttributeList = pAttr;
+
+                    HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
+                    if (hJob) {
+                        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+                        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+                        this->hJob = hJob;
+                    }
+
+                    PROCESS_INFORMATION pi = {};
+                    std::vector<wchar_t> cmdBuf(commandLine.begin(), commandLine.end());
+                    cmdBuf.push_back(L'\0');
+
+                    BOOL success = CreateProcessW(
+                        nullptr,
+                        cmdBuf.data(),
+                        nullptr,
+                        nullptr,
+                        FALSE,
+                        EXTENDED_STARTUPINFO_PRESENT,
+                        nullptr,
+                        cwd.c_str(),
+                        &siex.StartupInfo,
+                        &pi
+                    );
+
+                    if (success) {
+                        if (this->hJob) {
+                            AssignProcessToJobObject(this->hJob, pi.hProcess);
+                        }
+                        this->hProcess = pi.hProcess;
+
+                        // Background watcher thread to close PseudoConsole when client process exits
+                        std::thread waiter([this, hProc = pi.hProcess, hPseudo]() {
+                            WaitForSingleObject(hProc, INFINITE);
+                            if (this->hPC == hPseudo) {
+                                if (this->pfnClose) this->pfnClose(hPseudo);
+                                this->hPC = nullptr;
+                            }
+                        });
+                        waiter.detach();
+
+                        VT100Parser parser;
+                        parser.SetDefaultColors(theme.textPrimary, theme.bg);
+
+                        char buffer[4096];
+                        DWORD bytesRead = 0;
+
+                        while (ReadFile(hOutRead, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0) {
+                            buffer[bytesRead] = '\0';
+                            {
+                                std::lock_guard<std::mutex> lock(blockMutex);
+                                parser.Feed(std::string_view(buffer, bytesRead), pBlock->outputLines);
+                                activeParserCurrentLine = parser.currentLine;
+                            }
+                            if (notifyHwnd) {
+                                PostMessageW(notifyHwnd, WM_USER + 101, static_cast<WPARAM>(paneId), 0);
+                            }
+                        }
+
+                        {
+                            std::lock_guard<std::mutex> lock(blockMutex);
+                            if (!parser.currentLine.rawText.empty()) {
+                                parser.FlushCurrentLine(pBlock->outputLines);
+                            }
+                            activeParserCurrentLine = StyledLine();
+                        }
+
+                        WaitForSingleObject(pi.hProcess, 3000);
+                        DWORD exitCode = 0;
+                        GetExitCodeProcess(pi.hProcess, &exitCode);
+
+                        CloseHandle(pi.hProcess);
+                        CloseHandle(pi.hThread);
+                        CloseHandle(hOutRead);
+                        if (hInWrite) CloseHandle(hInWrite);
+                        this->hProcess = nullptr;
+                        this->hActiveReadPipe = nullptr;
+                        this->hStdInWrite = nullptr;
+                        if (this->hJob) {
+                            CloseHandle(this->hJob);
+                            this->hJob = nullptr;
+                        }
+                        DeleteProcThreadAttributeList(pAttr);
+
+                        if (!tempBatchFile.empty()) {
+                            _wremove(tempBatchFile.c_str());
+                        }
+
+                        auto endTime = std::chrono::high_resolution_clock::now();
+                        double durationMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
+
+                        {
+                            std::lock_guard<std::mutex> lock(blockMutex);
+                            pBlock->isRunning = false;
+                            pBlock->exitCode = static_cast<int>(exitCode);
+                            pBlock->executionTimeMs = durationMs;
+                            pBlock->diagnosis = ErrorDoctor::DiagnoseOutput(cmd, pBlock->exitCode, pBlock->outputLines);
+                        }
+
+                        isCommandRunning.store(false);
+
+                        if (notifyHwnd) {
+                            PostMessageW(notifyHwnd, WM_USER + 102, static_cast<WPARAM>(paneId), 0);
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Path 2: Anonymous Pipes Fallback (for older OS or when ConPTY initialization fails)
+            SECURITY_ATTRIBUTES sa;
+            sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+            sa.bInheritHandle = TRUE;
+            sa.lpSecurityDescriptor = nullptr;
+
+            HANDLE hReadPipe = nullptr;
+            HANDLE hWritePipe = nullptr;
+            if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+                std::lock_guard<std::mutex> lock(blockMutex);
+                StyledLine sl;
+                sl.rawText = L"Falha ao criar pipes de execucao.";
+                sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
+                pBlock->outputLines.push_back(sl);
+                pBlock->isRunning = false;
+                pBlock->exitCode = 1;
+                isCommandRunning.store(false);
+                if (notifyHwnd) {
+                    PostMessageW(notifyHwnd, WM_USER + 102, static_cast<WPARAM>(paneId), 0);
+                }
+                return;
+            }
+            SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+            HANDLE hInRead = nullptr;
+            HANDLE hInWrite = nullptr;
+            CreatePipe(&hInRead, &hInWrite, &sa, 0);
+            if (hInWrite) {
+                SetHandleInformation(hInWrite, HANDLE_FLAG_INHERIT, 0);
+                this->hStdInWrite = hInWrite;
             }
 
             STARTUPINFOEXW siex = {};
