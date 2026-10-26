@@ -2132,7 +2132,8 @@ public:
         const GitStatusInfo& gitInfo = GitStatusInfo{},
         std::mutex& blockMutex = GetFallbackMutex(),
         const AppSettings& settings = AppSettings{},
-        const std::vector<ProjectTask>& detectedTasks = {}
+        const std::vector<ProjectTask>& detectedTasks = {},
+        const StyledLine& activeCurrentLine = StyledLine{}
     ) {
         outTotalMatches = 0;
         breadcrumbSegments.clear();
@@ -2368,6 +2369,9 @@ public:
                     runCmdText = pane.activeRunningBlock->commandText;
                     runWorkDir = pane.activeRunningBlock->workingDirectory;
                     runLinesSnapshot = pane.activeRunningBlock->outputLines;
+                    if (!activeCurrentLine.rawText.empty()) {
+                        runLinesSnapshot.push_back(activeCurrentLine);
+                    }
                 }
             }
 

@@ -780,6 +780,19 @@ public:
             DetectLoadedScript(tab);
         } else {
             if (conPty.isCommandRunning.load()) {
+                if (conPty.currentRunningPaneId == pane.id && pane.activeRunningBlock) {
+                    conPty.SendInput(raw + L"\r\n");
+                    StyledLine echoSl;
+                    echoSl.rawText = raw;
+                    echoSl.spans.push_back({ raw, currentTheme.accent });
+                    {
+                        std::lock_guard<std::mutex> lock(conPty.blockMutex);
+                        pane.activeRunningBlock->outputLines.push_back(echoSl);
+                    }
+                    Invalidate();
+                    return;
+                }
+
                 auto block = std::make_unique<CommandBlock>();
                 block->id = nextBlockId++;
                 block->modeUsed = pane.mode;
@@ -787,11 +800,7 @@ public:
                 block->workingDirectory = pane.cwd;
                 block->exitCode = 1;
                 StyledLine sl;
-                if (conPty.currentRunningPaneId == pane.id) {
-                    sl.rawText = L"\u26A0 Comando anterior ainda em execução neste terminal. Aguarde ou pressione Ctrl+C para cancelar.";
-                } else {
-                    sl.rawText = L"\u26A0 Outro comando já está em execução em outra aba ou painel. Aguarde sua conclusão ou pressione Ctrl+C para cancelar.";
-                }
+                sl.rawText = L"[Aviso] Outro comando ja esta em execucao em outra aba ou painel. Aguarde sua conclusao ou pressione Ctrl+C para cancelar.";
                 sl.spans.push_back({ sl.rawText, currentTheme.syntaxInvalidCommand });
                 block->outputLines.push_back(sl);
                 pane.blocks.push_back(std::move(block));
@@ -1200,6 +1209,11 @@ public:
 
         // Classic Fluid Mode (Windows Terminal layout) vs Command Blocks Mode
         if (settings.classicFlowMode) {
+            StyledLine activeCurLine;
+            {
+                std::lock_guard<std::mutex> lock(conPty.blockMutex);
+                activeCurLine = conPty.activeParserCurrentLine;
+            }
             renderer.RenderClassicStream(
                 pane,
                 currentTheme,
@@ -1214,7 +1228,8 @@ public:
                 gitInfo,
                 conPty.blockMutex,
                 settings,
-                detectedTasks
+                detectedTasks,
+                activeCurLine
             );
         } else {
             // Command Blocks Mode
@@ -1866,8 +1881,24 @@ public:
                 Invalidate();
                 return;
             }
-            if (conPty.isCommandRunning.load()) {
+            if (conPty.isCommandRunning.load() || pane.activeRunningBlock) {
                 conPty.CancelCurrentCommand();
+                for (auto& tab : tabs) {
+                    for (auto& p : tab->panes) {
+                        if (p && p->activeRunningBlock) {
+                            p->activeRunningBlock->exitCode = 1;
+                            p->activeRunningBlock->isRunning = false;
+                            StyledLine cancelSl;
+                            cancelSl.rawText = L"[Processo interrompido (Ctrl+C)]";
+                            cancelSl.spans.push_back({ cancelSl.rawText, currentTheme.syntaxInvalidCommand });
+                            p->activeRunningBlock->outputLines.push_back(cancelSl);
+                            p->blocks.push_back(std::move(p->activeRunningBlock));
+                            p->activeRunningBlock = nullptr;
+                            p->autoScrollToBottom = true;
+                        }
+                    }
+                }
+                ShowToast(L"Processo interrompido (SIGINT)");
             } else {
                 pane.inputLine.clear();
                 pane.cursorPos = 0;
@@ -3190,7 +3221,22 @@ public:
         // Live Process Pill Kill Button
         if (renderer.liveProcessKillBtnRect.right > renderer.liveProcessKillBtnRect.left &&
             RendererD2D::PtInD2D1Rect(renderer.liveProcessKillBtnRect, pt)) {
-            conPty.WriteInput("\x03");
+            conPty.CancelCurrentCommand();
+            for (auto& tab : tabs) {
+                for (auto& p : tab->panes) {
+                    if (p && p->activeRunningBlock) {
+                        p->activeRunningBlock->exitCode = 1;
+                        p->activeRunningBlock->isRunning = false;
+                        StyledLine cancelSl;
+                        cancelSl.rawText = L"[Processo interrompido pelo usuario (Kill)]";
+                        cancelSl.spans.push_back({ cancelSl.rawText, currentTheme.syntaxInvalidCommand });
+                        p->activeRunningBlock->outputLines.push_back(cancelSl);
+                        p->blocks.push_back(std::move(p->activeRunningBlock));
+                        p->activeRunningBlock = nullptr;
+                        p->autoScrollToBottom = true;
+                    }
+                }
+            }
             ShowToast(L"Processo interrompido (SIGINT)");
             Invalidate();
             return;

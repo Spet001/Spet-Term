@@ -334,6 +334,9 @@ public:
     std::atomic<bool> isCommandRunning{ false };
     HANDLE hProcess = nullptr;
     HANDLE hStdInWrite = nullptr;
+    HANDLE hJob = nullptr;
+    HANDLE hActiveReadPipe = nullptr;
+    StyledLine activeParserCurrentLine;
     std::thread workerThread;
     HWND notifyHwnd = nullptr;
     int currentRunningPaneId = 1;
@@ -349,17 +352,30 @@ public:
 
     void CancelCurrentCommand() {
         if (isCommandRunning.load()) {
+            isCommandRunning.store(false);
+            if (hJob) {
+                TerminateJobObject(hJob, 1);
+            }
             if (hProcess) {
                 TerminateProcess(hProcess, 1);
+            }
+            if (hActiveReadPipe) {
+                CancelIoEx(hActiveReadPipe, nullptr);
             }
             if (hStdInWrite) {
                 CloseHandle(hStdInWrite);
                 hStdInWrite = nullptr;
             }
-            if (workerThread.joinable()) {
-                workerThread.detach(); // Allow quick return
+            {
+                std::lock_guard<std::mutex> lock(blockMutex);
+                activeParserCurrentLine = StyledLine();
             }
-            isCommandRunning.store(false);
+            if (workerThread.joinable()) {
+                workerThread.detach();
+            }
+            if (notifyHwnd) {
+                PostMessageW(notifyHwnd, WM_USER + 102, static_cast<WPARAM>(currentRunningPaneId), 0);
+            }
         }
     }
 
@@ -385,7 +401,7 @@ public:
     static std::wstring BuildCommandLine(ShellMode mode, const std::wstring& cmd, bool hasPwsh = false) {
         if (mode == ShellMode::ModePW) {
             std::wstring pwExe = hasPwsh ? L"pwsh.exe" : L"powershell.exe";
-            return pwExe + L" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + Base64EncodeUtf16(cmd);
+            return pwExe + L" -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + Base64EncodeUtf16(cmd);
         } else {
             return L"cmd.exe /q /d /c " + cmd;
         }
@@ -524,6 +540,15 @@ public:
             std::vector<wchar_t> cmdBuf(commandLine.begin(), commandLine.end());
             cmdBuf.push_back(L'\0');
 
+            // Create Job Object for reliable process-tree termination
+            HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
+            if (hJob) {
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+                jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+                this->hJob = hJob;
+            }
+
             BOOL success = CreateProcessW(
                 nullptr,
                 cmdBuf.data(),
@@ -541,17 +566,15 @@ public:
             CloseHandle(hWritePipe);
             if (hInRead) CloseHandle(hInRead);
 
-            // Close stdin for batch/encoded scripts so process does not hang waiting on interactive EOF
-            if ((mode == ShellMode::ModePW || !tempBatchFile.empty()) && hStdInWrite) {
-                CloseHandle(hStdInWrite);
-                hStdInWrite = nullptr;
-            }
-
             if (!success) {
                 CloseHandle(hReadPipe);
                 if (hStdInWrite) {
                     CloseHandle(hStdInWrite);
                     hStdInWrite = nullptr;
+                }
+                if (this->hJob) {
+                    CloseHandle(this->hJob);
+                    this->hJob = nullptr;
                 }
                 std::lock_guard<std::mutex> lock(blockMutex);
                 StyledLine sl;
@@ -567,7 +590,11 @@ public:
                 return;
             }
 
+            if (this->hJob) {
+                AssignProcessToJobObject(this->hJob, pi.hProcess);
+            }
             this->hProcess = pi.hProcess;
+            this->hActiveReadPipe = hReadPipe;
 
             // VT100 parser instance for this execution
             VT100Parser parser;
@@ -581,6 +608,7 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(blockMutex);
                     parser.Feed(std::string_view(buffer, bytesRead), pBlock->outputLines);
+                    activeParserCurrentLine = parser.currentLine;
                 }
                 if (notifyHwnd) {
                     PostMessageW(notifyHwnd, WM_USER + 101, static_cast<WPARAM>(paneId), 0);
@@ -593,9 +621,10 @@ public:
                 if (!parser.currentLine.rawText.empty()) {
                     parser.FlushCurrentLine(pBlock->outputLines);
                 }
+                activeParserCurrentLine = StyledLine();
             }
 
-            WaitForSingleObject(pi.hProcess, INFINITE);
+            WaitForSingleObject(pi.hProcess, 3000);
 
             DWORD exitCode = 0;
             GetExitCodeProcess(pi.hProcess, &exitCode);
@@ -604,6 +633,11 @@ public:
             CloseHandle(pi.hThread);
             CloseHandle(hReadPipe);
             this->hProcess = nullptr;
+            this->hActiveReadPipe = nullptr;
+            if (this->hJob) {
+                CloseHandle(this->hJob);
+                this->hJob = nullptr;
+            }
 
             if (!tempBatchFile.empty()) {
                 _wremove(tempBatchFile.c_str());
