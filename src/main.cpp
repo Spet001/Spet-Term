@@ -808,6 +808,31 @@ public:
                 return;
             }
 
+            // Check if command explicitly requires Windows Administrator privileges
+            if (IsCommandRequiringAdmin(raw) && !isAdmin) {
+                auto block = std::make_unique<CommandBlock>();
+                block->id = nextBlockId++;
+                block->modeUsed = pane.mode;
+                block->commandText = raw;
+                block->workingDirectory = pane.cwd;
+                block->exitCode = 5; // ERROR_ACCESS_DENIED
+                StyledLine sl1, sl2;
+                if (settings.language == "pt-BR") {
+                    sl1.rawText = L"[Aviso UAC] O comando '" + raw + L"' requer privilegios de Administrador para ser executado.";
+                    sl2.rawText = L"Dica: Abra uma nova sessao elevada no menu da barra de titulo ou pressione Ctrl+Shift+T.";
+                } else {
+                    sl1.rawText = L"[UAC Warning] The command '" + raw + L"' requires Administrator privileges to run.";
+                    sl2.rawText = L"Tip: Open a new elevated tab from the titlebar menu or press Ctrl+Shift+T.";
+                }
+                sl1.spans.push_back({ sl1.rawText, currentTheme.syntaxInvalidCommand });
+                sl2.spans.push_back({ sl2.rawText, currentTheme.textDim });
+                block->outputLines.push_back(sl1);
+                block->outputLines.push_back(sl2);
+                pane.blocks.push_back(std::move(block));
+                Invalidate();
+                return;
+            }
+
             auto block = std::make_unique<CommandBlock>();
             block->id = nextBlockId++;
             block->modeUsed = pane.mode;

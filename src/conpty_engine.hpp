@@ -602,6 +602,8 @@ public:
 
                     STARTUPINFOEXW siex = {};
                     siex.StartupInfo.cb = sizeof(STARTUPINFOEXW);
+                    siex.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
+                    siex.StartupInfo.wShowWindow = SW_HIDE;
                     siex.lpAttributeList = pAttr;
 
                     HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
@@ -622,7 +624,7 @@ public:
                         nullptr,
                         nullptr,
                         FALSE,
-                        EXTENDED_STARTUPINFO_PRESENT,
+                        EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
                         nullptr,
                         cwd.c_str(),
                         &siex.StartupInfo,
@@ -747,7 +749,8 @@ public:
 
             STARTUPINFOEXW siex = {};
             siex.StartupInfo.cb = sizeof(STARTUPINFOEXW);
-            siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            siex.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+            siex.StartupInfo.wShowWindow = SW_HIDE;
             siex.StartupInfo.hStdOutput = hWritePipe;
             siex.StartupInfo.hStdError = hWritePipe;
             siex.StartupInfo.hStdInput = (hInRead != nullptr) ? hInRead : INVALID_HANDLE_VALUE;

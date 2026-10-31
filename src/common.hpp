@@ -475,6 +475,24 @@ inline bool IsRunningAsAdmin() {
     return isAdmin != FALSE;
 }
 
+inline bool IsCommandRequiringAdmin(const std::wstring& cmd) {
+    std::wstring trimmed = Trim(cmd);
+    std::wstring lower = ToLower(trimmed);
+    if (lower == L"diskpart" || StartsWith(lower, L"diskpart ") || StartsWith(lower, L"diskpart.exe")) {
+        return true;
+    }
+    if (lower == L"bcdedit" || StartsWith(lower, L"bcdedit ") || StartsWith(lower, L"bcdedit.exe")) {
+        return true;
+    }
+    if (lower == L"sfc" || StartsWith(lower, L"sfc ") || StartsWith(lower, L"sfc.exe")) {
+        return true;
+    }
+    if (lower == L"dism" || StartsWith(lower, L"dism ") || StartsWith(lower, L"dism.exe")) {
+        return true;
+    }
+    return false;
+}
+
 struct DetectedLink {
     std::wstring url;
     size_t startChar = 0;
