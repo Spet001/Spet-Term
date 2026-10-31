@@ -2,6 +2,7 @@
 
 #include "common.hpp"
 #include "error_doctor.hpp"
+#include "terminal_screen_buffer.hpp"
 
 namespace speta {
 
@@ -20,9 +21,11 @@ public:
     bool pendingCR = false;
 
     StyledLine currentLine;
+    TerminalScreenBuffer screenBuffer;
+    bool isTuiMode = false;
 
     VT100Parser() {
-        ResetStyle();
+        FullReset();
     }
 
     void SetDefaultColors(D2D1_COLOR_F fg, D2D1_COLOR_F bg) {
@@ -30,6 +33,7 @@ public:
         defaultBg = bg;
         currentFg = fg;
         currentBg = bg;
+        screenBuffer.SetDefaultColors(fg, bg);
     }
 
     void ResetStyle() {
@@ -38,8 +42,14 @@ public:
         isBold = false;
         isItalic = false;
         isUnderline = false;
+    }
+
+    void FullReset() {
+        ResetStyle();
         pendingSeq.clear();
         pendingCR = false;
+        screenBuffer.Reset();
+        isTuiMode = false;
     }
 
     void Feed(std::string_view chunk, std::vector<StyledLine>& outLines) {
@@ -81,20 +91,60 @@ public:
                         if (finalChar == L'm') {
                             // SGR color/style sequence
                             ParseSGR(paramStr);
+                        } else if (finalChar == L'h') {
+                            if (paramStr == L"?1049" || paramStr == L"?47") {
+                                screenBuffer.EnterAlternateBuffer();
+                                isTuiMode = true;
+                                screenBuffer.ExportToLines(outLines);
+                            } else if (paramStr == L"?25") {
+                                screenBuffer.cursorVisible = true;
+                            }
+                        } else if (finalChar == L'l') {
+                            if (paramStr == L"?1049" || paramStr == L"?47") {
+                                screenBuffer.ExitAlternateBuffer();
+                                isTuiMode = false;
+                                screenBuffer.ExportToLines(outLines);
+                            } else if (paramStr == L"?25") {
+                                screenBuffer.cursorVisible = false;
+                            }
                         } else if (finalChar == L'J') {
                             // Clear display
-                            if (paramStr == L"2" || paramStr.empty() || paramStr == L"3") {
-                                outLines.clear();
-                                currentLine = StyledLine();
+                            if (paramStr == L"2") {
+                                screenBuffer.ClearDisplay(2);
+                                if (isTuiMode) {
+                                    screenBuffer.ExportToLines(outLines);
+                                }
+                            } else if (paramStr == L"3") {
+                                screenBuffer.ClearDisplay(3);
+                            } else if (paramStr.empty() || paramStr == L"0") {
+                                screenBuffer.ClearDisplay(0);
+                            } else if (paramStr == L"1") {
+                                screenBuffer.ClearDisplay(1);
                             }
                         } else if (finalChar == L'K') {
                             // Erase in line
-                            currentLine = StyledLine();
+                            int kMode = 0;
+                            if (paramStr == L"1") kMode = 1;
+                            else if (paramStr == L"2") kMode = 2;
+                            screenBuffer.ClearLine(kMode);
+                            if (isTuiMode) {
+                                screenBuffer.ExportToLines(outLines);
+                            } else {
+                                if (kMode == 2) currentLine = StyledLine();
+                            }
                         } else if (finalChar == L'H' || finalChar == L'f') {
-                            // Cursor Position / Home: if 1;1 or empty, reset display
-                            if (paramStr.empty() || paramStr == L"1;1" || paramStr == L"H") {
-                                outLines.clear();
-                                currentLine = StyledLine();
+                            // Cursor Position / Home: update coordinates without wiping scrollback
+                            int r = 1, c = 1;
+                            size_t semi = paramStr.find(L';');
+                            if (semi != std::wstring::npos) {
+                                try { r = std::stoi(paramStr.substr(0, semi)); } catch (...) { r = 1; }
+                                try { c = std::stoi(paramStr.substr(semi + 1)); } catch (...) { c = 1; }
+                            } else if (!paramStr.empty()) {
+                                try { r = std::stoi(paramStr); } catch (...) { r = 1; }
+                            }
+                            screenBuffer.SetCursorPosition(r, c);
+                            if (isTuiMode) {
+                                screenBuffer.ExportToLines(outLines);
                             }
                         } else if (finalChar == L'A') {
                             // Cursor Up
@@ -102,10 +152,9 @@ public:
                             if (!paramStr.empty()) {
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
                             }
-                            while (count > 0 && !outLines.empty()) {
-                                currentLine = outLines.back();
-                                outLines.pop_back();
-                                count--;
+                            screenBuffer.MoveCursor(-count, 0);
+                            if (isTuiMode) {
+                                screenBuffer.ExportToLines(outLines);
                             }
                         } else if (finalChar == L'B') {
                             // Cursor Down
@@ -113,11 +162,24 @@ public:
                             if (!paramStr.empty()) {
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
                             }
-                            while (count > 0) {
-                                outLines.push_back(currentLine);
-                                currentLine = StyledLine();
-                                count--;
+                            screenBuffer.MoveCursor(count, 0);
+                            if (isTuiMode) {
+                                screenBuffer.ExportToLines(outLines);
                             }
+                        } else if (finalChar == L'C') {
+                            // Cursor Forward
+                            int count = 1;
+                            if (!paramStr.empty()) {
+                                try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
+                            }
+                            screenBuffer.MoveCursor(0, count);
+                        } else if (finalChar == L'D') {
+                            // Cursor Backward
+                            int count = 1;
+                            if (!paramStr.empty()) {
+                                try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
+                            }
+                            screenBuffer.MoveCursor(0, -count);
                         }
                         idx = seqEnd + 1;
                         continue;
@@ -153,6 +215,7 @@ public:
             }
 
             if (c == L'\r') {
+                screenBuffer.CarriageReturn();
                 if (idx + 1 < len) {
                     if (wchunk[idx + 1] == L'\n') {
                         // CRLF
@@ -161,7 +224,9 @@ public:
                         continue;
                     } else {
                         // CR alone: carriage return (overwrite line)
-                        currentLine = StyledLine();
+                        if (!isTuiMode) {
+                            currentLine = StyledLine();
+                        }
                         idx++;
                         continue;
                     }
@@ -179,7 +244,7 @@ public:
             }
 
             if (c == L'\t') {
-                // Tab expand to 4 spaces
+                screenBuffer.Tab();
                 AppendChar(L' ');
                 AppendChar(L' ');
                 AppendChar(L' ');
@@ -189,6 +254,7 @@ public:
             }
 
             if (c == L'\b') {
+                screenBuffer.Backspace();
                 if (!currentLine.rawText.empty()) {
                     currentLine.rawText.pop_back();
                     if (!currentLine.spans.empty()) {
@@ -208,18 +274,32 @@ public:
             AppendChar(c);
             idx++;
         }
+
+        if (isTuiMode) {
+            screenBuffer.ExportToLines(outLines);
+        }
     }
 
     void FlushCurrentLine(std::vector<StyledLine>& outLines) {
+        screenBuffer.NewLine();
+        if (isTuiMode) {
+            screenBuffer.ExportToLines(outLines);
+            currentLine = StyledLine();
+            return;
+        }
         outLines.push_back(currentLine);
         currentLine = StyledLine();
-        if (outLines.size() > 1000) {
+        if (outLines.size() > 2000) {
             outLines.erase(outLines.begin(), outLines.begin() + 100);
         }
     }
 
 private:
     void AppendChar(wchar_t c) {
+        screenBuffer.WriteChar(c, currentFg, currentBg, isBold, isItalic, isUnderline);
+        if (isTuiMode) {
+            return;
+        }
         currentLine.rawText += c;
         if (currentLine.spans.empty() || !CanMergeSpan(currentLine.spans.back())) {
             StyledSpan span;
@@ -624,7 +704,7 @@ public:
                         nullptr,
                         nullptr,
                         FALSE,
-                        EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
+                        EXTENDED_STARTUPINFO_PRESENT,
                         nullptr,
                         cwd.c_str(),
                         &siex.StartupInfo,
@@ -658,6 +738,7 @@ public:
                             {
                                 std::lock_guard<std::mutex> lock(blockMutex);
                                 parser.Feed(std::string_view(buffer, bytesRead), pBlock->outputLines);
+                                pBlock->isAltBuffer = parser.isTuiMode;
                                 activeParserCurrentLine = parser.currentLine;
                             }
                             if (notifyHwnd && !isStreamPending.exchange(true)) {
@@ -670,6 +751,7 @@ public:
                             if (!parser.currentLine.rawText.empty()) {
                                 parser.FlushCurrentLine(pBlock->outputLines);
                             }
+                            pBlock->isAltBuffer = parser.isTuiMode;
                             activeParserCurrentLine = StyledLine();
                         }
 

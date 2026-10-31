@@ -819,10 +819,10 @@ public:
                 StyledLine sl1, sl2;
                 if (settings.language == "pt-BR") {
                     sl1.rawText = L"[Aviso UAC] O comando '" + raw + L"' requer privilegios de Administrador para ser executado.";
-                    sl2.rawText = L"Dica: Abra uma nova sessao elevada no menu da barra de titulo ou pressione Ctrl+Shift+T.";
+                    sl2.rawText = L"Dica: Abra uma nova sessao de Administrador no menu (+) da barra de titulo.";
                 } else {
                     sl1.rawText = L"[UAC Warning] The command '" + raw + L"' requires Administrator privileges to run.";
-                    sl2.rawText = L"Tip: Open a new elevated tab from the titlebar menu or press Ctrl+Shift+T.";
+                    sl2.rawText = L"Tip: Open a new Administrator session from the titlebar (+) menu.";
                 }
                 sl1.spans.push_back({ sl1.rawText, currentTheme.syntaxInvalidCommand });
                 sl2.spans.push_back({ sl2.rawText, currentTheme.textDim });
@@ -2004,10 +2004,6 @@ public:
                 return;
             } else if (vk == VK_TAB) {
                 conPty.WriteInput("\t");
-                Invalidate();
-                return;
-            } else if (vk == VK_SPACE) {
-                conPty.WriteInput(" ");
                 Invalidate();
                 return;
             } else if (vk == VK_ESCAPE) {

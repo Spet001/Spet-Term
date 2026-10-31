@@ -2365,15 +2365,17 @@ public:
             std::wstring runCmdText;
             std::wstring runWorkDir;
             std::vector<StyledLine> runLinesSnapshot;
+            bool isAltMode = false;
             {
                 std::lock_guard<std::mutex> lock(blockMutex);
                 if (pane.activeRunningBlock) {
+                    isAltMode = pane.activeRunningBlock->isAltBuffer;
                     promptTag = (pane.activeRunningBlock->modeUsed == ShellMode::ModePW) ? L"PS " : L"";
                     runCmdText = pane.activeRunningBlock->commandText;
                     runWorkDir = pane.activeRunningBlock->workingDirectory;
                     const auto& srcLines = pane.activeRunningBlock->outputLines;
                     size_t count = srcLines.size();
-                    size_t maxSnap = 150;
+                    size_t maxSnap = isAltMode ? 50 : 150;
                     size_t startI = (count > maxSnap) ? (count - maxSnap) : 0;
                     runLinesSnapshot.reserve(count - startI + 1);
                     for (size_t i = startI; i < count; ++i) {
@@ -2409,9 +2411,8 @@ public:
             float cwRun = (charWidth > 1.0f) ? charWidth : 8.0f;
             int maxRunCols = (std::max)(20, static_cast<int>(availRunW / cwRun));
 
-            for (const auto& rawLine : runLinesSnapshot) {
-                std::vector<StyledLine> wrappedLines = WrapStyledLine(rawLine, maxRunCols);
-                for (const auto& line : wrappedLines) {
+            if (isAltMode) {
+                for (const auto& line : runLinesSnapshot) {
                     float lineBottom = curY + lineHeight;
                     if (lineBottom >= py - 4.0f && curY <= py + ph + 4.0f) {
                         float spanX = streamX;
@@ -2422,6 +2423,22 @@ public:
                         }
                     }
                     curY += lineHeight;
+                }
+            } else {
+                for (const auto& rawLine : runLinesSnapshot) {
+                    std::vector<StyledLine> wrappedLines = WrapStyledLine(rawLine, maxRunCols);
+                    for (const auto& line : wrappedLines) {
+                        float lineBottom = curY + lineHeight;
+                        if (lineBottom >= py - 4.0f && curY <= py + ph + 4.0f) {
+                            float spanX = streamX;
+                            for (const auto& span : line.spans) {
+                                IDWriteTextFormat* tf = span.bold ? pTermFormatBold : pTermFormat;
+                                DrawText(span.text, spanX, curY, span.fg, tf);
+                                spanX += MeasureStringWidth(span.text, tf);
+                            }
+                        }
+                        curY += lineHeight;
+                    }
                 }
             }
             curY += 8.0f;

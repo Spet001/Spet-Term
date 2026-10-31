@@ -298,6 +298,7 @@ struct CommandBlock {
     int exitCode = 0;
     bool isRunning = false;
     bool isCollapsed = false;
+    bool isAltBuffer = false;
     std::wstring timestamp;
     ErrorDiagnosis diagnosis;
     DWORD startTick = 0;
