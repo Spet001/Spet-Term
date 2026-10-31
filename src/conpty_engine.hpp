@@ -3,6 +3,7 @@
 #include "common.hpp"
 #include "error_doctor.hpp"
 #include "terminal_screen_buffer.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -111,9 +112,8 @@ public:
                             // Clear display
                             if (paramStr == L"2") {
                                 screenBuffer.ClearDisplay(2);
-                                if (isTuiMode) {
-                                    screenBuffer.ExportToLines(outLines);
-                                }
+                                isTuiMode = true;
+                                screenBuffer.ExportToLines(outLines);
                             } else if (paramStr == L"3") {
                                 screenBuffer.ClearDisplay(3);
                             } else if (paramStr.empty() || paramStr == L"0") {
@@ -153,9 +153,8 @@ public:
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
                             }
                             screenBuffer.MoveCursor(-count, 0);
-                            if (isTuiMode) {
-                                screenBuffer.ExportToLines(outLines);
-                            }
+                            isTuiMode = true;
+                            screenBuffer.ExportToLines(outLines);
                         } else if (finalChar == L'B') {
                             // Cursor Down
                             int count = 1;
@@ -808,7 +807,8 @@ public:
             if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
                 std::lock_guard<std::mutex> lock(blockMutex);
                 StyledLine sl;
-                sl.rawText = L"Falha ao criar pipes de execucao.";
+                bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
+                sl.rawText = ptbr ? L"Falha ao criar pipes de execucao." : L"Failed to create execution pipes.";
                 sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
                 pBlock->outputLines.push_back(sl);
                 pBlock->isRunning = false;

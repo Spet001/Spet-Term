@@ -289,7 +289,7 @@ public:
     }
 
     void InitPaletteActions() {
-        bool ptbr = (settings.language == "pt-BR");
+        bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
         if (ptbr) {
             paletteActions = {
                 { 19, L"Ajuda: Ver Todos os Comandos e Atalhos (help)", L"Exibe documentacao de atalhos e utilitarios do Spet@term", L"" },
@@ -782,10 +782,10 @@ public:
             if (conPty.isCommandRunning.load()) {
                 if (conPty.currentRunningPaneId == pane.id && pane.activeRunningBlock) {
                     conPty.SendInput(raw + L"\r\n");
-                    StyledLine echoSl;
-                    echoSl.rawText = raw;
-                    echoSl.spans.push_back({ raw, currentTheme.accent });
-                    {
+                    if (!pane.activeRunningBlock->isAltBuffer) {
+                        StyledLine echoSl;
+                        echoSl.rawText = raw;
+                        echoSl.spans.push_back({ raw, currentTheme.accent });
                         std::lock_guard<std::mutex> lock(conPty.blockMutex);
                         pane.activeRunningBlock->outputLines.push_back(echoSl);
                     }
@@ -800,7 +800,12 @@ public:
                 block->workingDirectory = pane.cwd;
                 block->exitCode = 1;
                 StyledLine sl;
-                sl.rawText = L"[Aviso] Outro comando ja esta em execucao em outra aba ou painel. Aguarde sua conclusao ou pressione Ctrl+C para cancelar.";
+                bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
+                if (ptbr) {
+                    sl.rawText = L"[Aviso] Outro comando ja esta em execucao em outra aba ou painel. Aguarde sua conclusao ou pressione Ctrl+C para cancelar.";
+                } else {
+                    sl.rawText = L"[Warning] Another command is already running in another tab or pane. Wait for it to finish or press Ctrl+C to cancel.";
+                }
                 sl.spans.push_back({ sl.rawText, currentTheme.syntaxInvalidCommand });
                 block->outputLines.push_back(sl);
                 pane.blocks.push_back(std::move(block));
@@ -817,12 +822,13 @@ public:
                 block->workingDirectory = pane.cwd;
                 block->exitCode = 5; // ERROR_ACCESS_DENIED
                 StyledLine sl1, sl2;
-                if (settings.language == "pt-BR") {
+                bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
+                if (ptbr) {
                     sl1.rawText = L"[Aviso UAC] O comando '" + raw + L"' requer privilegios de Administrador para ser executado.";
-                    sl2.rawText = L"Dica: Abra uma nova sessao de Administrador no menu (+) da barra de titulo.";
+                    sl2.rawText = L"Dica: Abra uma nova sessao de Administrador no menu suspenso (v) da barra de titulo ou pelo Command Palette (Ctrl+Shift+P).";
                 } else {
                     sl1.rawText = L"[UAC Warning] The command '" + raw + L"' requires Administrator privileges to run.";
-                    sl2.rawText = L"Tip: Open a new Administrator session from the titlebar (+) menu.";
+                    sl2.rawText = L"Tip: Open a new Administrator session from the titlebar dropdown menu (v) or via Command Palette (Ctrl+Shift+P).";
                 }
                 sl1.spans.push_back({ sl1.rawText, currentTheme.syntaxInvalidCommand });
                 sl2.spans.push_back({ sl2.rawText, currentTheme.textDim });
@@ -1902,19 +1908,20 @@ public:
             if (hasSelection && !selectedText.empty()) {
                 CopyTextToClipboard(hwnd, selectedText);
                 hasSelection = false;
-                ShowToast((settings.language == "pt-BR") ? L"Texto copiado!" : L"Copied to clipboard!");
+                ShowToast((I18n::GetResolvedLanguage() == LanguageMode::PtBR) ? L"Texto copiado!" : L"Copied to clipboard!");
                 Invalidate();
                 return;
             }
             if (conPty.isCommandRunning.load() || pane.activeRunningBlock) {
                 conPty.CancelCurrentCommand();
+                bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
                 for (auto& tab : tabs) {
                     for (auto& p : tab->panes) {
                         if (p && p->activeRunningBlock) {
                             p->activeRunningBlock->exitCode = 1;
                             p->activeRunningBlock->isRunning = false;
                             StyledLine cancelSl;
-                            cancelSl.rawText = L"[Processo interrompido (Ctrl+C)]";
+                            cancelSl.rawText = ptbr ? L"[Processo interrompido (Ctrl+C)]" : L"[Process interrupted (Ctrl+C)]";
                             cancelSl.spans.push_back({ cancelSl.rawText, currentTheme.syntaxInvalidCommand });
                             p->activeRunningBlock->outputLines.push_back(cancelSl);
                             p->blocks.push_back(std::move(p->activeRunningBlock));
@@ -1923,7 +1930,7 @@ public:
                         }
                     }
                 }
-                ShowToast(L"Processo interrompido (SIGINT)");
+                ShowToast(ptbr ? L"Processo interrompido (SIGINT)" : L"Process terminated (SIGINT)");
             } else {
                 pane.inputLine.clear();
                 pane.cursorPos = 0;
@@ -2003,7 +2010,7 @@ public:
                 Invalidate();
                 return;
             } else if (vk == VK_TAB) {
-                conPty.WriteInput("\t");
+                conPty.WriteInput(shift ? "\x1b[Z" : "\t");
                 Invalidate();
                 return;
             } else if (vk == VK_ESCAPE) {
@@ -2011,9 +2018,13 @@ public:
                 Invalidate();
                 return;
             } else if (vk == VK_RETURN) {
-                conPty.WriteInput("\r\n");
+                conPty.WriteInput("\r");
                 pane.inputLine.clear();
                 pane.cursorPos = 0;
+                Invalidate();
+                return;
+            } else if (vk == VK_SPACE) {
+                conPty.WriteInput(" ");
                 Invalidate();
                 return;
             } else if (vk == VK_BACK) {
@@ -2190,9 +2201,11 @@ public:
         if (c >= 32) {
             auto& pane = GetActivePane();
             if (conPty.isCommandRunning.load() && conPty.currentRunningPaneId == pane.id) {
-                std::wstring s(1, c);
-                conPty.SendInput(s);
-                Invalidate();
+                if (c != 32) {
+                    std::wstring s(1, c);
+                    conPty.SendInput(s);
+                    Invalidate();
+                }
                 return;
             }
             pane.inputLine.insert(pane.cursorPos, 1, c);
@@ -2355,7 +2368,7 @@ public:
         multiLinePasteModalOpen = false;
 
         if (conPty.isCommandRunning.load()) {
-            ShowToast((settings.language == "pt-BR") ? L"Comando anterior ainda em execução." : L"Previous command still running.");
+            ShowToast((I18n::GetResolvedLanguage() == LanguageMode::PtBR) ? L"Comando anterior ainda em execução." : L"Previous command still running.");
             Invalidate();
             return;
         }
@@ -3323,13 +3336,14 @@ public:
         if (renderer.liveProcessKillBtnRect.right > renderer.liveProcessKillBtnRect.left &&
             RendererD2D::PtInD2D1Rect(renderer.liveProcessKillBtnRect, pt)) {
             conPty.CancelCurrentCommand();
+            bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
             for (auto& tab : tabs) {
                 for (auto& p : tab->panes) {
                     if (p && p->activeRunningBlock) {
                         p->activeRunningBlock->exitCode = 1;
                         p->activeRunningBlock->isRunning = false;
                         StyledLine cancelSl;
-                        cancelSl.rawText = L"[Processo interrompido pelo usuario (Kill)]";
+                        cancelSl.rawText = ptbr ? L"[Processo interrompido pelo usuario (Kill)]" : L"[Process terminated by user (Kill)]";
                         cancelSl.spans.push_back({ cancelSl.rawText, currentTheme.syntaxInvalidCommand });
                         p->activeRunningBlock->outputLines.push_back(cancelSl);
                         p->blocks.push_back(std::move(p->activeRunningBlock));
@@ -3338,7 +3352,7 @@ public:
                     }
                 }
             }
-            ShowToast(L"Processo interrompido (SIGINT)");
+            ShowToast(ptbr ? L"Processo interrompido (SIGINT)" : L"Process terminated (SIGINT)");
             Invalidate();
             return;
         }
@@ -3552,7 +3566,8 @@ public:
                     if (out.is_open()) {
                         std::string text = WideToUtf8(blk->GetAllOutputText());
                         out.write(text.data(), text.size());
-                        ShowToast(L"Log exportado!");
+                        bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
+                        ShowToast(ptbr ? L"Log exportado!" : L"Log exported!");
                     }
                 }
                 return;
@@ -3778,7 +3793,7 @@ public:
             if (hasSelection && !selectedText.empty()) {
                 CopyTextToClipboard(hwnd, selectedText);
                 hasSelection = false;
-                ShowToast((settings.language == "pt-BR") ? L"Texto copiado!" : L"Copied to clipboard!");
+                ShowToast((I18n::GetResolvedLanguage() == LanguageMode::PtBR) ? L"Texto copiado!" : L"Copied to clipboard!");
                 Invalidate();
                 return;
             }
