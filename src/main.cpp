@@ -979,7 +979,6 @@ public:
         // Suppress hero empty state if any modal is active (prevents visual bleed-through)
         renderer.suppressEmptyState = (workfolderOpen || settingsOpen || timelineOpen || paletteOpen || helpModalOpen || multiLinePasteModalOpen || onboarding.open);
 
-        // 1. Unified Custom Frameless Titlebar (36px)
         auto& activeTab = GetActiveTab();
         GitStatusInfo gitInfo = GitEngine::InspectRepository(activeTab.GetActivePane().cwd);
         detectedTasks = DetectProjectTasks(activeTab.GetActivePane().cwd);
@@ -1031,7 +1030,6 @@ public:
                 settings.language
             );
         } else {
-            // 2. Render Active Tab Panes & Pinned Reference Panel
             bool isCtrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             float paneW = bodyW;
             if (pinnedBlock) {
@@ -1074,22 +1072,18 @@ public:
             }
         }
 
-        // Modular Telemetry Status Bar (24px at bottom)
         if (settings.statusBarVisible) {
             renderer.RenderModularStatusBar(currentTheme, settings, width, height, gitInfo, telemetry, mousePos);
         }
 
-        // 3. Render Docked Snippets Sidebar if open
         if (snippetsPopoverOpen) {
             renderer.RenderSnippetsSidebar(currentTheme, width, height, settings.snippets, mousePos);
         }
 
-        // 4. Render Search Bar (Ctrl+F)
         if (searchOpen) {
             renderer.RenderSearchBar(currentTheme, width, searchQuery, searchMatchIndex, totalSearchMatches, mousePos, snippetsPopoverOpen);
         }
 
-        // 5. Render Popovers & Menus
         if (fileMenuOpen) {
             renderer.RenderFileMenu(currentTheme, mousePos, fileMenuX);
         } else if (profileMenuOpen) {
@@ -1098,7 +1092,6 @@ public:
             renderer.RenderGitPopover(currentTheme, gitInfo, mousePos);
         }
 
-        // 6. Render Command Palette if active
         if (paletteOpen) {
             std::vector<std::pair<std::wstring, std::wstring>> filtered;
             std::wstring qLower = ToLower(paletteQuery);
@@ -1113,53 +1106,43 @@ public:
             renderer.RenderCommandPalette(currentTheme, width, height, paletteQuery, filtered, paletteSelectedIndex, paletteScrollOffset, mousePos, settings.language);
         }
 
-        // 6b. Render Timeline History Modal (Ctrl+R)
         if (timelineOpen) {
             renderer.RenderTimelineHistoryModal(currentTheme, width, height, timelineHistory, timelineSelectedIndex, timelineFilterSuccessOnly, mousePos, settings.language);
         }
 
-        // 7. Render Workfolder Modal (Telescope)
         if (workfolderOpen) {
             auto filtered = WorkfolderScanner::FuzzyFilter(workfolderItems, workfolderFilter);
             renderer.RenderWorkfolderPanel(currentTheme, width, height, activeTab.GetActivePane().cwd, filtered, workfolderSelectedIndex, mousePos, workfolderFilter, settings.language);
         }
 
-        // 8. Render Settings Modal
         if (settingsOpen) {
             renderer.RenderSettingsPanel(currentTheme, settings, width, height, mousePos);
         }
 
-        // 8a. Render Onboarding Walkthrough
         if (onboarding.open) {
             renderer.RenderOnboarding(currentTheme, settings, onboarding, width, height, mousePos);
         }
 
-        // 8e. Render Help Modal
         if (helpModalOpen) {
             renderer.RenderHelpModal(currentTheme, width, height, mousePos, settings.language);
         }
 
-        // 8f. Render Multi-line Paste Modal
         if (multiLinePasteModalOpen) {
             renderer.RenderMultiLinePasteModal(currentTheme, width, height, pendingPasteText, mousePos, settings.language);
         }
 
-        // 8b. Render Breadcrumb Sibling Popover (#2)
         if (breadcrumbPopoverOpen) {
             renderer.RenderBreadcrumbSiblingPopover(currentTheme, breadcrumbTargetDir, breadcrumbSiblings, breadcrumbAnchorRect, mousePos);
         }
 
-        // 8c. Render Task Runner Contextual Dropdown Menu (#3)
         if (taskMenuOpen && !detectedTasks.empty()) {
             renderer.RenderTaskMenu(currentTheme, detectedTasks, renderer.taskRunnerBtnRect, mousePos);
         }
 
-        // 8d. Render Dark Direct2D Sidebar Context Menu
         if (renderer.sidebarContextMenuOpen) {
             renderer.RenderSidebarContextMenu(currentTheme, mousePos);
         }
 
-        // 9. Tooltips for Titlebar and Sidebar Hover
         if (mousePos.x > 0 && mousePos.y >= 0 && !fileMenuOpen && !profileMenuOpen && !workfolderOpen && !settingsOpen && !timelineOpen && !renderer.sidebarContextMenuOpen) {
             std::wstring tip;
             if (mousePos.y < RendererD2D::TITLEBAR_HEIGHT) {
@@ -1183,17 +1166,14 @@ public:
             }
         }
 
-        // 10. Toast Notification
         if (toastAlpha > 0.0f) {
             renderer.RenderToast(toastMessage, width, height, toastAlpha);
         }
 
-        // 11. 1px Window Border when not maximized
         if (!isMax) {
             renderer.DrawWindowBorder(width, height);
         }
 
-        // 12. Edge Pulse Peripheral Glow
         if (edgePulseActive) {
             DWORD elapsed = GetTickCount() - edgePulseStartTick;
             if (elapsed < 1800) {
@@ -1204,7 +1184,6 @@ public:
             }
         }
 
-        // 13. Post-Processing Overlays (CRT Scanlines, Phosphor Bloom, Vignette, Warmth Filter)
         renderer.RenderPostProcessingOverlays(currentTheme, settings, width, height);
 
         if (!settings.systemCursor && mousePos.x >= 0 && mousePos.y >= 0) {
@@ -1418,7 +1397,6 @@ public:
             }
         }
 
-        // 1. Tab Renaming inline mode
         if (renamingTabIndex != -1) {
             if (vk == VK_RETURN) {
                 if (!renamingText.empty()) {
@@ -1440,7 +1418,6 @@ public:
             return;
         }
 
-        // 1b. Onboarding Modal Keyboard Navigation
         if (onboarding.open) {
             if (vk == VK_RETURN) {
                 if (onboarding.step == 6) {
@@ -1473,7 +1450,6 @@ public:
             return;
         }
 
-        // 2. Settings Modal Esc to close
         if (settingsOpen) {
             if (vk == VK_ESCAPE) {
                 settingsOpen = false;
@@ -1484,7 +1460,6 @@ public:
             return;
         }
 
-        // 3. Search Bar active navigation
         if (searchOpen) {
             if (vk == VK_ESCAPE) {
                 searchOpen = false;
@@ -1516,7 +1491,6 @@ public:
             return;
         }
 
-        // 4. Command Palette
         if (paletteOpen) {
             if (vk == VK_ESCAPE) {
                 paletteOpen = false;
@@ -1568,7 +1542,6 @@ public:
         auto& tab = GetActiveTab();
         auto& pane = tab.GetActivePane();
 
-        // 4b. Timeline History Modal (Ctrl+R)
         if (timelineOpen) {
             if (vk == VK_ESCAPE) {
                 timelineOpen = false;
@@ -1620,7 +1593,6 @@ public:
             return;
         }
 
-        // Workfolder Keyboard Navigation (Telescope)
         if (workfolderOpen) {
             auto filtered = WorkfolderScanner::FuzzyFilter(workfolderItems, workfolderFilter);
             if (vk == VK_UP) {
@@ -1688,7 +1660,6 @@ public:
             return;
         }
 
-        // 5. Global Shortcuts
         if (ctrl && shift && vk == 'P') {
             paletteOpen = true;
             prePaletteTheme = currentTheme;
@@ -2633,7 +2604,6 @@ public:
                 Invalidate();
                 return;
             }
-            // Step 0: Language
             for (const auto& lb : onboarding.languageBtns) {
                 if (RendererD2D::PtInD2D1Rect(lb.first, pt)) {
                     settings.language = lb.second;
@@ -2642,7 +2612,6 @@ public:
                     return;
                 }
             }
-            // Step 1: Shell
             if (RendererD2D::PtInD2D1Rect(onboarding.shellPwBtnRect, pt)) {
                 settings.classicFlowMode = true;
                 Invalidate();
@@ -2653,7 +2622,6 @@ public:
                 Invalidate();
                 return;
             }
-            // Step 2: Themes
             for (const auto& tb : onboarding.themeBtns) {
                 if (RendererD2D::PtInD2D1Rect(tb.first, pt)) {
                     SetTheme(tb.second);
@@ -2661,7 +2629,6 @@ public:
                     return;
                 }
             }
-            // Step 2: Fonts
             for (const auto& fb : onboarding.fontBtns) {
                 if (RendererD2D::PtInD2D1Rect(fb.first, pt)) {
                     settings.fontFamily = fb.second;
@@ -2686,7 +2653,6 @@ public:
                 }
                 return;
             }
-            // Step 3: Wallpaper
             for (const auto& wb : onboarding.wallpaperBtns) {
                 if (RendererD2D::PtInD2D1Rect(wb.first, pt)) {
                     settings.wallpaperPath = wb.second;
@@ -2725,7 +2691,6 @@ public:
                 }
                 return;
             }
-            // Step 5: Quick Prefs
             for (const auto& wb : onboarding.warnPasteBtns) {
                 if (RendererD2D::PtInD2D1Rect(wb.first, pt)) {
                     settings.warnMultiLinePaste = wb.second;

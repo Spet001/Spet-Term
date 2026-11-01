@@ -292,7 +292,6 @@ public:
     }
 
     bool Initialize(HWND hwnd) {
-        // Step B: Enable per-pixel alpha composition on the Win32 window
         MARGINS margins = { -1, -1, -1, -1 };
         DwmExtendFrameIntoClientArea(hwnd, &margins);
 
@@ -723,10 +722,6 @@ public:
         return hr;
     }
 
-    // ==========================================
-    // Hybrid Geometry Engine v4.0 (Brutalist Chamfer 45 deg + Tactical Glass)
-    // ==========================================
-
     void FillAdaptiveBox(
         const D2D1_RECT_F& r,
         const Theme& theme,
@@ -911,10 +906,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Native Windows 11 Fluent Icon Engine (Segoe Fluent Icons / SegoeIcons.ttf)
-    // ==========================================
-
     void DrawFluentIcon(wchar_t glyph, const D2D1_RECT_F& rect, D2D1_COLOR_F color, IDWriteTextFormat* fmt = nullptr) {
         if (!pRenderTarget) return;
         if (!fmt) fmt = pIconFormat;
@@ -952,10 +943,6 @@ public:
         pSolidBrush->SetColor(ColorHex(0x26262E));
         pRenderTarget->DrawRectangle(D2D1::RectF(0.5f, 0.5f, width - 0.5f, height - 0.5f), pSolidBrush, 1.0f);
     }
-
-    // ==========================================
-    // Vector Icon Drawing Helpers (Zero Glitches)
-    // ==========================================
 
     void DrawShieldIcon(float x, float y, float size, D2D1_COLOR_F color, bool fill = false) {
         pSolidBrush->SetColor(color);
@@ -1171,10 +1158,6 @@ public:
         return p;
     }
 
-    // ==========================================
-    // Unified Custom Frameless Titlebar (38px)
-    // ==========================================
-
     void RenderUnifiedTitleBar(
         const Theme& theme,
         float width,
@@ -1191,15 +1174,12 @@ public:
     ) {
         D2D1_RECT_F barRect = D2D1::RectF(0, 0, width, TITLEBAR_HEIGHT);
 
-        // Windows 11 dark titlebar background (#16161E) distinct from canvas
         pSolidBrush->SetColor(ColorHex(0x16161E));
         pRenderTarget->FillRectangle(barRect, pSolidBrush);
 
-        // 1px subtle divider below titlebar (#282836)
         pSolidBrush->SetColor(ColorHex(0x282836));
         pRenderTarget->DrawLine(D2D1::Point2F(0, TITLEBAR_HEIGHT - 0.5f), D2D1::Point2F(width, TITLEBAR_HEIGHT - 0.5f), pSolidBrush, 1.0f);
 
-        // 1. App Menu Button with Win98 terminal icon on far left (30x26px, y = 5.0f..31.0f)
         fileBtnRect = D2D1::RectF(6.0f, 5.0f, 36.0f, 31.0f);
         bool fileHover = PtInD2D1Rect(fileBtnRect, mousePos);
         if (fileHover) {
@@ -1208,7 +1188,6 @@ public:
         }
         SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, SpriteId::TerminalWindow, fileBtnRect, 18.0f, 18.0f);
 
-        // Workfolder / Workspace Sidebar Toggle Button (right beside FILE, 30x26px)
         workfolderBtnRect = D2D1::RectF(40.0f, 5.0f, 70.0f, 31.0f);
         bool wfHover = PtInD2D1Rect(workfolderBtnRect, mousePos);
         if (sidebarOpen || wfHover) {
@@ -1221,7 +1200,6 @@ public:
         }
         SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, "folder_16.png", workfolderBtnRect, 16.0f, 16.0f);
 
-        // 2. Right Side: Custom Tactical Window Controls ([_], [⌜⌟], [✕])
         minBtnRect = D2D1::RectF(width - 138.0f, 0, width - 92.0f, TITLEBAR_HEIGHT);
         maxBtnRect = D2D1::RectF(width - 92.0f, 0, width - 46.0f, TITLEBAR_HEIGHT);
         closeBtnRect = D2D1::RectF(width - 46.0f, 0, width, TITLEBAR_HEIGHT);
@@ -1230,7 +1208,6 @@ public:
         bool maxHover = PtInD2D1Rect(maxBtnRect, mousePos);
         bool closeHover = PtInD2D1Rect(closeBtnRect, mousePos);
 
-        // Minimize [_]: Thick chamfered lower bar with light indicator on hover
         D2D1_RECT_F minBox = D2D1::RectF(minBtnRect.left + 4.0f, minBtnRect.top + 5.0f, minBtnRect.right - 4.0f, minBtnRect.bottom - 5.0f);
         if (minHover) {
             FillAdaptiveBox(minBox, theme, ColorHex(0x22222E), ColorHex(0x38384A), 4.0f, false);
@@ -1470,7 +1447,6 @@ public:
             tabX += tabWidth + 2.0f;
         }
 
-        // 4. New Tab Button [+] & Dropdown Button [v] directly following last tab
         newTabBtnRect = D2D1::RectF(tabX + 4.0f, 5.0f, tabX + 32.0f, 31.0f);
         bool newTabHover = PtInD2D1Rect(newTabBtnRect, mousePos);
         if (newTabHover) {
@@ -1515,14 +1491,6 @@ public:
         if (PtInD2D1Rect(closeBtnRect, pt)) return true;
         return false;
     }
-
-    // ==========================================
-    // Bottom Developer Status Bar (28px)
-    // ==========================================
-
-    // ==========================================
-    // Modular Telemetry Status Bar (24px at window bottom, Alt+M toggle)
-    // ==========================================
 
     void RenderModularStatusBar(
         const Theme& theme,
@@ -1621,11 +1589,6 @@ public:
         return false;
     }
 
-    // ==========================================
-    // Empty State HUD (Tactical Workspace Diagnosis)
-    // ==========================================
-
-    // Vector keycap: rounded plate with a darker lip, readable at 12px UI text
     float DrawKeycapVec(const std::wstring& label, float x, float y, float h = 22.0f) {
         float tw = MeasureStringWidth(label, pUIFormatBold);
         float w = (std::max)(22.0f, tw + 14.0f);
@@ -1736,9 +1699,6 @@ public:
             DrawKeyComboVec(rows[i].keys, bx + rowW - 12.0f - totalKw, keyY, keyH);
         }
     }
-    // ==========================================
-    // Breadcrumb Sibling Folder Popover (#2)
-    // ==========================================
 
     void RenderBreadcrumbSiblingPopover(
         const Theme& theme,
@@ -1800,10 +1760,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Contextual Task Runner Dropdown Menu (#3)
-    // ==========================================
-
     void RenderTaskMenu(
         const Theme& theme,
         const std::vector<ProjectTask>& tasks,
@@ -1862,9 +1818,6 @@ public:
             curY += itemH;
         }
     }
-    // ==========================================
-    // Pinned Output Reference Panel (#5)
-    // ==========================================
 
     void RenderPinnedOutputPanel(
         const Theme& theme,
@@ -1934,10 +1887,6 @@ public:
 
         pRenderTarget->PopAxisAlignedClip();
     }
-
-    // ==========================================
-    // Visual Timeline History Modal (#8, Ctrl+R)
-    // ==========================================
 
     void RenderTimelineHistoryModal(
         const Theme& theme,
@@ -2076,10 +2025,6 @@ public:
         DrawTimelinePill(timelineFooterEscRect, { L"Esc" }, ptbr ? L"Fechar" : L"Close");
     }
 
-    // ==========================================
-    // Edge Pulse Animation (#9)
-    // ==========================================
-
     void RenderEdgePulse(float width, float height, float progress, bool isSuccess) {
         if (!pRenderTarget || progress <= 0.001f) return;
 
@@ -2105,10 +2050,6 @@ public:
         std::wstring alertTxt = isSuccess ? L"TASK FINISHED" : L"TASK FAILED";
         DrawText(alertTxt, pillX + 30.0f, pillY + 4.5f, isSuccess ? ColorHex(0x00FF9C) : ColorHex(0xFF2A55), pUIFormatBold);
     }
-
-    // ==========================================
-    // Classic Stream Rendering (Command Blocks + Docked/Flow Prompt v4.0)
-    // ==========================================
 
     static std::mutex& GetFallbackMutex() {
         static std::mutex s_mtx;
@@ -2450,7 +2391,6 @@ public:
 
         pRenderTarget->PopAxisAlignedClip();
 
-        // Step 4: Render Prompt Card (Docked Bottom Card vs Flow Card)
         float promptCardY = isBottomDocked ? (py + ph - promptCardH - 4.0f) : curY;
         D2D1_RECT_F promptCardRect = D2D1::RectF(streamX - 6.0f, promptCardY - 2.0f, streamX + streamW + 6.0f, promptCardY + promptCardH);
 
@@ -2618,10 +2558,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Scrollbar with Mini-Map Markers (#4)
-    // ==========================================
-
     void RenderScrollbarWithMarkers(
         const Theme& theme,
         float px, float py, float pw, float ph,
@@ -2663,10 +2599,6 @@ public:
             }
         }
     }
-
-    // ==========================================
-    // Step 13: File Menu Dropdown (250px, Segoe Fluent Icons, Zero Emojis)
-    // ==========================================
 
     void RenderFileMenu(const Theme& theme, POINT mousePos, float menuX = 6.0f) {
         float mx = menuX;
@@ -2751,10 +2683,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Profile Menu Dropdown (PowerShell, CMD, Admin, Splits)
-    // ==========================================
-
     void RenderProfileMenu(const Theme& theme, POINT mousePos, float menuX) {
         float mx = menuX;
         if (pRenderTarget) {
@@ -2828,10 +2756,6 @@ public:
             }
         }
     }
-
-    // ==========================================
-    // Git Popover Menu (Zero Emojis, Clean Context)
-    // ==========================================
 
     void RenderGitPopover(const Theme& theme, const GitStatusInfo& gitInfo, POINT mousePos) {
         float gx = (statusGitRect.left > 0.0f) ? statusGitRect.left : 12.0f;
@@ -2917,10 +2841,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Step 12: Retractable Docked Right-Hand Snippets Sidebar (280px, OMXTerm Style)
-    // ==========================================
-
     void RenderSnippetsSidebar(const Theme& theme, float width, float height, const std::vector<SnippetItem>& snippets, POINT mousePos) {
         float sw = 280.0f;
         float sx = width - sw;
@@ -2991,15 +2911,6 @@ public:
         D2D1_SIZE_F sz = pRenderTarget->GetSize();
         RenderSnippetsSidebar(theme, sz.width, sz.height, snippets, mousePos);
     }
-
-    // ==========================================
-    // Visual Settings Panel / Modal
-    // ==========================================
-
-    // ==========================================
-    // ==========================================
-    // Workfolder Telescope / Command Palette (760px x 460px, Ctrl+B)
-    // ==========================================
 
     void RenderWorkfolderPanel(
         const Theme& theme,
@@ -3272,10 +3183,6 @@ public:
         DrawFooterPill(workfolderExplorerBtnRect, { L"Ctrl", L"E" }, L"Explorer");
         DrawFooterPill(workfolderFooterEscRect, { L"Esc" }, ptbr ? L"Fechar" : L"Close");
     }
-
-    // ==========================================
-    // Workspace Explorer Sidebar & Mini IDE Engine
-    // ==========================================
 
     void RenderWorkspaceSidebar(
         const Theme& theme,
@@ -3620,10 +3527,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Unified Segmented Control Engine (Step 8)
-    // ==========================================
-
     struct SegmentOption {
         std::wstring id;
         std::wstring label;
@@ -3688,10 +3591,6 @@ public:
             DrawText(opt.label, startX, textY, txtCol, pUIFormatSmall);
         }
     }
-
-    // ==========================================
-    // Visual Settings Panel / Modal (680px x 520px)
-    // ==========================================
 
     void RenderSettingsPanel(
         const Theme& currentTheme,
@@ -4154,10 +4053,6 @@ public:
         }
     }
 
-    // ==========================================
-    // Onboarding Walkthrough Modal (7 Steps)
-    // ==========================================
-
     void RenderOnboarding(
         const Theme& currentTheme,
         AppSettings& settings,
@@ -4229,7 +4124,7 @@ public:
 
         // Render Step Content
         switch (state.step) {
-        case 0: { // Step 0: Welcome & Language
+        case 0: {
             float iconX = contentLeft + (contentW - 48.0f) * 0.5f;
             float iconY = contentTop + 24.0f;
             D2D1_RECT_F icR = D2D1::RectF(iconX, iconY, iconX + 48.0f, iconY + 48.0f);
@@ -4264,7 +4159,7 @@ public:
             break;
         }
 
-        case 1: { // Step 1: Default Shell
+        case 1: {
             DrawText(I18n::Get(StringId::Onboarding_ShellTitle), contentLeft, contentTop + 10.0f, ColorHex(0xF0F0FF), pUIFormatTitle);
             DrawText(I18n::Get(StringId::Onboarding_ShellDesc), contentLeft, contentTop + 42.0f, ColorHex(0x88889C), pUIFormatSmall);
 
@@ -4310,7 +4205,7 @@ public:
             break;
         }
 
-        case 2: { // Step 2: Appearance (Theme & Font)
+        case 2: {
             DrawText(I18n::Get(StringId::Onboarding_AppearanceTitle), contentLeft, contentTop + 10.0f, ColorHex(0xF0F0FF), pUIFormatTitle);
             DrawText(I18n::Get(StringId::Onboarding_AppearanceDesc), contentLeft, contentTop + 42.0f, ColorHex(0x88889C), pUIFormatSmall);
 
@@ -4377,7 +4272,7 @@ public:
             break;
         }
 
-        case 3: { // Step 3: Wallpaper
+        case 3: {
             DrawText(I18n::Get(StringId::Onboarding_WallpaperTitle), contentLeft, contentTop + 10.0f, ColorHex(0xF0F0FF), pUIFormatTitle);
             DrawText(I18n::Get(StringId::Onboarding_WallpaperDesc), contentLeft, contentTop + 42.0f, ColorHex(0x88889C), pUIFormatSmall);
 
@@ -4460,7 +4355,7 @@ public:
             break;
         }
 
-        case 4: { // Step 4: Core Features
+        case 4: {
             DrawText(I18n::Get(StringId::Onboarding_FeaturesTitle), contentLeft, contentTop + 10.0f, ColorHex(0xF0F0FF), pUIFormatTitle);
             DrawText(I18n::Get(StringId::Onboarding_FeaturesDesc), contentLeft, contentTop + 42.0f, ColorHex(0x88889C), pUIFormatSmall);
 
@@ -4512,7 +4407,7 @@ public:
             break;
         }
 
-        case 5: { // Step 5: Quick Preferences
+        case 5: {
             DrawText(I18n::Get(StringId::Onboarding_QuickPrefsTitle), contentLeft, contentTop + 10.0f, ColorHex(0xF0F0FF), pUIFormatTitle);
             DrawText(I18n::Get(StringId::Onboarding_QuickPrefsDesc), contentLeft, contentTop + 42.0f, ColorHex(0x88889C), pUIFormatSmall);
 
@@ -4568,7 +4463,7 @@ public:
             break;
         }
 
-        case 6: { // Step 6: All Set! (Summary & Finish)
+        case 6: {
             float iconX = contentLeft + (contentW - 48.0f) * 0.5f;
             float iconY = contentTop + 16.0f;
             D2D1_RECT_F icR = D2D1::RectF(iconX, iconY, iconX + 48.0f, iconY + 48.0f);
@@ -4656,10 +4551,6 @@ public:
         float ntw = MeasureStringWidth(nTxt, pUIFormatBold);
         DrawText(nTxt, state.nextBtnRect.left + (nextW - ntw) * 0.5f, footerY + 18.0f, ColorHex(0x000000), pUIFormatBold);
     }
-
-    // ==========================================
-    // Help & Shortcuts Cheat-Sheet Modal (F1 / Help)
-    // ==========================================
 
     void RenderHelpModal(
         const Theme& theme,
@@ -4784,10 +4675,6 @@ public:
         DrawText(footer, mx + (mw - fw) * 0.5f, my + mh - 26.0f, ColorHex(0x6A6A80), pUIFormatSmall);
     }
 
-    // ==========================================
-    // Multi-line Paste Security Warning Modal
-    // ==========================================
-
     void RenderMultiLinePasteModal(
         const Theme& theme,
         float screenW,
@@ -4875,10 +4762,6 @@ public:
         DrawText(canTxt, multiLinePasteCancelBtnRect.left + (btnW - cnw) * 0.5f, multiLinePasteCancelBtnRect.top + 8.0f, ColorHex(0xD0D0E2), pUIFormatBold);
     }
 
-    // ==========================================
-    // Tooltip and Toast Notification Helpers
-    // ==========================================
-
     void RenderTooltip(const std::wstring& text, float x, float y, float screenW, float screenH) {
         if (text.empty() || !pRenderTarget) return;
         float tw = MeasureStringWidth(text, pUIFormatSmall) + 16.0f;
@@ -4920,10 +4803,6 @@ public:
 
         DrawText(text, tx + 30.0f, ty + 7.0f, ColorHex(0xFFFFFF), pUIFormat);
     }
-
-    // ==========================================
-    // Search Bar (Ctrl+F)
-    // ==========================================
 
     void RenderSearchBar(
         const Theme& theme,
@@ -4976,10 +4855,6 @@ public:
         DrawSmallIconBtn(searchNextBtnRect, L"\uE70D");  // ChevronDown
         DrawSmallIconBtn(searchCloseBtnRect, L"\uE711"); // Cancel
     }
-
-    // ==========================================
-    // Existing Helpers & Autocomplete
-    // ==========================================
 
     void RenderBackground(const Theme& theme, float width, float height, int dimPercent = 60) {
         if (!pRenderTarget) return;
@@ -5237,10 +5112,6 @@ public:
             DrawText(noCmd, palX + 22.0f, palY + 60.0f, theme.textDim, pUIFormatSmall);
         }
     }
-
-    // ==========================================
-    // Dark Direct2D Sidebar Context Menu
-    // ==========================================
 
     void RenderSidebarContextMenu(const Theme& theme, POINT mousePos) {
         if (!sidebarContextMenuOpen || sidebarContextMenuItems.empty() || !pRenderTarget) return;

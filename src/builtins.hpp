@@ -200,7 +200,6 @@ private:
             target = prevCwd;
         }
 
-        // Clean quotes
         if (target.size() >= 2 && target.front() == L'\"' && target.back() == L'\"') {
             target = target.substr(1, target.size() - 2);
         }
@@ -258,7 +257,6 @@ private:
             return;
         }
 
-        // Header line
         {
             LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine header;
@@ -291,7 +289,6 @@ private:
         } while (FindNextFileW(hFind, &fd));
         FindClose(hFind);
 
-        // Sort alphabetical
         auto comp = [](const WIN32_FIND_DATAW& a, const WIN32_FIND_DATAW& b) {
             return _wcsicmp(a.cFileName, b.cFileName) < 0;
         };
@@ -328,7 +325,6 @@ private:
                 line.spans.push_back({ sizeBuf, theme.syntaxNumber });
             }
 
-            // Name styling based on extension
             std::wstring name = item.cFileName;
             D2D1_COLOR_F nameCol = theme.textPrimary;
             bool bold = false;
@@ -368,7 +364,6 @@ private:
             FormatEntry(f, false);
         }
 
-        // Summary footer
         {
             LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine summary;
@@ -417,7 +412,6 @@ private:
 
         std::wstring lower = ToLower(resolved);
         if (EndsWith(lower, L".png") || EndsWith(lower, L".jpg") || EndsWith(lower, L".jpeg") || EndsWith(lower, L".bmp") || EndsWith(lower, L".ico")) {
-            // Load inline image
             ExecuteImg(resolved, cwd, block, theme, onImageLoad);
             return;
         }
@@ -444,7 +438,6 @@ private:
             swprintf_s(numBuf, L"%4d | ", lineNum);
             sl.spans.push_back({ numBuf, theme.textDim });
 
-            // Basic syntax highlighting
             std::wstring trimmed = Trim(wLine);
             if (StartsWith(trimmed, L"#") || StartsWith(trimmed, L"//") || StartsWith(trimmed, L"rem ")) {
                 sl.spans.push_back({ wLine, theme.syntaxComment });
@@ -734,4 +727,4 @@ public:
     }
 };
 
-} // namespace speta
+}

@@ -77,9 +77,7 @@ public:
             wchar_t c = wchunk[idx];
 
             if (c == L'\x1b') {
-                // Escape sequence start
                 if (idx + 1 < len && wchunk[idx + 1] == L'[') {
-                    // CSI sequence
                     size_t seqStart = idx + 2;
                     size_t seqEnd = seqStart;
                     while (seqEnd < len && (wchunk[seqEnd] >= L'0' && wchunk[seqEnd] <= L'?' || wchunk[seqEnd] == L';')) {
@@ -90,7 +88,6 @@ public:
                         wchar_t finalChar = wchunk[seqEnd];
                         std::wstring paramStr = wchunk.substr(seqStart, seqEnd - seqStart);
                         if (finalChar == L'm') {
-                            // SGR color/style sequence
                             ParseSGR(paramStr);
                         } else if (finalChar == L'h') {
                             if (paramStr == L"?1049" || paramStr == L"?47") {
@@ -109,7 +106,6 @@ public:
                                 screenBuffer.cursorVisible = false;
                             }
                         } else if (finalChar == L'J') {
-                            // Clear display
                             if (paramStr == L"2") {
                                 screenBuffer.ClearDisplay(2);
                                 isTuiMode = true;
@@ -122,7 +118,6 @@ public:
                                 screenBuffer.ClearDisplay(1);
                             }
                         } else if (finalChar == L'K') {
-                            // Erase in line
                             int kMode = 0;
                             if (paramStr == L"1") kMode = 1;
                             else if (paramStr == L"2") kMode = 2;
@@ -133,7 +128,6 @@ public:
                                 if (kMode == 2) currentLine = StyledLine();
                             }
                         } else if (finalChar == L'H' || finalChar == L'f') {
-                            // Cursor Position / Home: update coordinates without wiping scrollback
                             int r = 1, c = 1;
                             size_t semi = paramStr.find(L';');
                             if (semi != std::wstring::npos) {
@@ -147,7 +141,6 @@ public:
                                 screenBuffer.ExportToLines(outLines);
                             }
                         } else if (finalChar == L'A') {
-                            // Cursor Up
                             int count = 1;
                             if (!paramStr.empty()) {
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
@@ -156,7 +149,6 @@ public:
                             isTuiMode = true;
                             screenBuffer.ExportToLines(outLines);
                         } else if (finalChar == L'B') {
-                            // Cursor Down
                             int count = 1;
                             if (!paramStr.empty()) {
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
@@ -166,14 +158,12 @@ public:
                                 screenBuffer.ExportToLines(outLines);
                             }
                         } else if (finalChar == L'C') {
-                            // Cursor Forward
                             int count = 1;
                             if (!paramStr.empty()) {
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
                             }
                             screenBuffer.MoveCursor(0, count);
                         } else if (finalChar == L'D') {
-                            // Cursor Backward
                             int count = 1;
                             if (!paramStr.empty()) {
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
@@ -183,12 +173,10 @@ public:
                         idx = seqEnd + 1;
                         continue;
                     } else {
-                        // Sequence cut off across chunk boundary
                         pendingSeq = wchunk.substr(idx);
                         break;
                     }
                 } else if (idx + 1 < len && wchunk[idx + 1] == L']') {
-                    // OSC sequence (e.g. title) - skip to BEL (\x07) or ST (\x1b\)
                     size_t endOsc = idx + 2;
                     while (endOsc < len && wchunk[endOsc] != L'\x07') {
                         if (wchunk[endOsc] == L'\x1b' && endOsc + 1 < len && wchunk[endOsc + 1] == L'\\') {
@@ -217,12 +205,10 @@ public:
                 screenBuffer.CarriageReturn();
                 if (idx + 1 < len) {
                     if (wchunk[idx + 1] == L'\n') {
-                        // CRLF
                         FlushCurrentLine(outLines);
                         idx += 2;
                         continue;
                     } else {
-                        // CR alone: carriage return (overwrite line)
                         if (!isTuiMode) {
                             currentLine = StyledLine();
                         }
@@ -269,7 +255,6 @@ public:
                 continue;
             }
 
-            // Normal printable char
             AppendChar(c);
             idx++;
         }
@@ -897,7 +882,6 @@ public:
             this->hProcess = pi.hProcess;
             this->hActiveReadPipe = hReadPipe;
 
-            // VT100 parser instance for this execution
             VT100Parser parser;
             parser.SetDefaultColors(theme.textPrimary, theme.bg);
 
@@ -916,7 +900,6 @@ public:
                 }
             }
 
-            // Flush any remaining characters in parser
             {
                 std::lock_guard<std::mutex> lock(blockMutex);
                 if (!parser.currentLine.rawText.empty()) {
@@ -958,7 +941,6 @@ public:
                 pBlock->exitCode = static_cast<int>(exitCode);
                 pBlock->executionTimeMs = durationMs;
 
-                // Smart Error Doctor diagnosis
                 pBlock->diagnosis = ErrorDoctor::DiagnoseOutput(cmd, pBlock->exitCode, pBlock->outputLines);
             }
 
@@ -973,4 +955,4 @@ public:
     }
 };
 
-} // namespace speta
+}

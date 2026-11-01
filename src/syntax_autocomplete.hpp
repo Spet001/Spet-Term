@@ -64,7 +64,6 @@ public:
 
         std::wstring inLower = ToLower(input);
 
-        // 1. Search command history in reverse (most recent first)
         for (auto it = history.rbegin(); it != history.rend(); ++it) {
             const std::wstring& h = *it;
             if (h.size() > input.size()) {
@@ -75,7 +74,6 @@ public:
             }
         }
 
-        // 2. Search local files and directories in cwd (only for single tokens without spaces or pipes)
         if (!cwd.empty() && input.find(L' ') == std::wstring::npos && input.find(L'|') == std::wstring::npos && input.find(L';') == std::wstring::npos) {
             std::wstring searchPattern = cwd;
             if (searchPattern.back() != L'\\' && searchPattern.back() != L'/') {
@@ -174,7 +172,6 @@ public:
                     if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
                         std::wstring fname = ToLower(fd.cFileName);
                         if (EndsWith(fname, L".exe") || EndsWith(fname, L".cmd") || EndsWith(fname, L".bat") || EndsWith(fname, L".ps1")) {
-                            // Store full name and name without extension
                             pathExecutables.insert(fname);
                             size_t dot = fname.rfind(L'.');
                             if (dot != std::wstring::npos) {
@@ -242,11 +239,10 @@ public:
         if (typo.size() < 2) return L"";
 
         std::wstring bestMatch;
-        int minDistance = 4; // Max distance threshold
+        int minDistance = 4;
 
         std::wstring lowerTypo = ToLower(typo);
 
-        // Check built-ins
         for (const auto& b : builtins) {
             int dist = LevenshteinDistance(lowerTypo, b);
             if (dist < minDistance) {
@@ -255,7 +251,6 @@ public:
             }
         }
 
-        // Common commands
         static const wchar_t* commonCmds[] = {
             L"python", L"node", L"npm", L"clang++", L"g++", L"git", L"cargo", L"rustc",
             L"pwsh", L"powershell", L"cmd", L"code", L"pip", L"dotnet", L"cmake"
@@ -268,7 +263,6 @@ public:
             }
         }
 
-        // Check path
         if (minDistance > 1) {
             for (const auto& p : pathExecutables) {
                 if (p.size() < 15) {
@@ -320,7 +314,6 @@ public:
             if (validCmdlet) return true;
         }
 
-        // Check in cwd
         for (const auto& f : cwdFiles) {
             if (_wcsicmp(f.c_str(), cmd.c_str()) == 0) return true;
             std::wstring lowerF = ToLower(f);
@@ -329,7 +322,6 @@ public:
             }
         }
 
-        // Check direct path
         DWORD attrs = GetFileAttributesW(cmd.c_str());
         if (attrs != INVALID_FILE_ATTRIBUTES) return true;
 
@@ -385,7 +377,6 @@ public:
 
         if (input.empty()) return analysis;
 
-        // 1. Check delimiter balance with string quote awareness
         std::vector<std::pair<wchar_t, size_t>> delimStack;
         wchar_t inQuote = 0;
         size_t quoteStart = 0;
@@ -395,11 +386,11 @@ public:
 
             if (inQuote != 0) {
                 if (c == L'\\' && i + 1 < input.size()) {
-                    ++i; // Skip escaped character
+                    ++i;
                     continue;
                 }
                 if (c == inQuote) {
-                    inQuote = 0; // String closed
+                    inQuote = 0;
                 }
                 continue;
             }
@@ -449,14 +440,12 @@ public:
             else if (unclosed == L'{') analysis.syntaxErrorMessage = L"Chave '{' não foi fechada";
         }
 
-        // 2. Tokenize and assign syntax colors
         size_t idx = 0;
         size_t len = input.size();
         bool isFirstToken = true;
         std::wstring firstCommand;
 
         while (idx < len) {
-            // Skip spaces
             if (iswspace(input[idx])) {
                 SyntaxToken sp;
                 sp.text = input.substr(idx, 1);
@@ -468,7 +457,6 @@ public:
                 continue;
             }
 
-            // String literals
             if (input[idx] == L'\"' || input[idx] == L'\'') {
                 wchar_t quote = input[idx];
                 size_t start = idx;
@@ -489,7 +477,6 @@ public:
                 continue;
             }
 
-            // Shell Operators: |, ||, &, &&, ;, >, >>, <
             if (input[idx] == L'|' || input[idx] == L'&' || input[idx] == L';' || input[idx] == L'>' || input[idx] == L'<') {
                 size_t start = idx;
                 wchar_t op = input[idx];
@@ -504,12 +491,11 @@ public:
                 tok.color = theme.accent;
                 analysis.tokens.push_back(tok);
                 if (tok.text == L"|" || tok.text == L"||" || tok.text == L"&&" || tok.text == L";") {
-                    isFirstToken = true; // Next word is a command
+                    isFirstToken = true;
                 }
                 continue;
             }
 
-            // Word token
             size_t start = idx;
             while (idx < len && !iswspace(input[idx]) && input[idx] != L'\"' && input[idx] != L'\'' &&
                    input[idx] != L'|' && input[idx] != L'&' && input[idx] != L';' && input[idx] != L'>' && input[idx] != L'<') {
@@ -537,7 +523,6 @@ public:
                     tok.isInvalid = true;
                     tok.isUnderlined = true;
 
-                    // Suggest closest command
                     LanguageMode lang = I18n::GetResolvedLanguage();
                     std::wstring suggestion = FindClosestCommand(word);
                     if (!suggestion.empty()) {
@@ -560,7 +545,6 @@ public:
                 }
                 isFirstToken = false;
             } else {
-                // Subsequent tokens
                 if (StartsWith(word, L"-") || StartsWith(word, L"/")) {
                     tok.color = theme.syntaxFlag;
                 } else if (StartsWith(word, L"$") || (StartsWith(word, L"%") && EndsWith(word, L"%"))) {
@@ -568,14 +552,13 @@ public:
                 } else if (word == L"|" || word == L">" || word == L">>" || word == L"&&" || word == L"||") {
                     tok.color = theme.accent;
                     if (word == L"|" || word == L"&&" || word == L"||") {
-                        isFirstToken = true; // Next word is a command
+                        isFirstToken = true;
                     }
                 } else if (!word.empty() && iswdigit(word[0])) {
                     tok.color = theme.syntaxNumber;
                 } else if (firstCommand == L"git" && gitSubcommands.count(ToLower(word)) > 0) {
                     tok.color = theme.syntaxKeyword;
                 } else {
-                    // Check if file exists in cwd
                     bool exists = false;
                     for (const auto& f : cwdFiles) {
                         if (_wcsicmp(f.c_str(), word.c_str()) == 0) {
@@ -589,7 +572,6 @@ public:
                         tok.color = theme.textPrimary;
                     }
 
-                    // Language specific validations
                     if ((firstCommand == L"python" || firstCommand == L"py") && EndsWith(ToLower(word), L".py")) {
                         if (!exists) {
                             tok.color = theme.syntaxInvalidCommand;
@@ -653,7 +635,6 @@ public:
                         else if (unclosed == L'{') analysis.syntaxErrorMessage = L"Sintaxe Python: Chave '{' não foi fechada";
                     }
 
-                    // Check compound statements missing colon
                     if (!analysis.hasSyntaxError) {
                         static const wchar_t* compoundKws[] = { L"if ", L"elif ", L"for ", L"while ", L"def ", L"class ", L"with " };
                         for (const auto* kw : compoundKws) {
@@ -675,7 +656,6 @@ public:
         if (firstCommand == L"node") {
             size_t ePos = input.find(L"-e");
             if (ePos != std::wstring::npos) {
-                // Delimiter balance inside -e
                 size_t codeStart = ePos + 2;
                 while (codeStart < input.size() && iswspace(input[codeStart])) codeStart++;
                 if (codeStart < input.size()) {
@@ -768,7 +748,6 @@ public:
         // Check if cursor is in the first token
         bool isFirstToken = (tokenStart == 0);
 
-        // Determine main command
         std::wstring mainCmd;
         size_t firstSpace = input.find(L' ');
         if (firstSpace != std::wstring::npos && firstSpace <= tokenStart) {
@@ -776,7 +755,6 @@ public:
         }
 
         if (isFirstToken) {
-            // Suggest built-ins
             for (const auto& b : builtins) {
                 if (lowerToken.empty() || StartsWith(b, lowerToken)) {
                     AutocompleteItem item;
@@ -791,7 +769,6 @@ public:
                 }
             }
 
-            // Common CLI tools
             static const wchar_t* tools[] = { L"python", L"clang++", L"g++", L"git", L"node", L"npm", L"pwsh", L"cargo" };
             for (const auto* t : tools) {
                 if (lowerToken.empty() || StartsWith(t, lowerToken)) {
@@ -807,7 +784,6 @@ public:
                 }
             }
 
-            // Path executables matching prefix
             if (!lowerToken.empty()) {
                 for (const auto& p : pathExecutables) {
                     if (StartsWith(p, lowerToken)) {
@@ -821,9 +797,7 @@ public:
                 }
             }
         } else {
-            // Context aware argument suggestion
             if (mainCmd == L"cd") {
-                // Only directories
                 for (const auto& d : cwdDirs) {
                     if (lowerToken.empty() || StartsWith(ToLower(d), lowerToken)) {
                         AutocompleteItem item;
@@ -840,7 +814,6 @@ public:
             }
 
             if (mainCmd == L"git") {
-                // Check if subcommands
                 if (input.substr(0, tokenStart) == L"git " || input.substr(0, tokenStart) == L"git") {
                     for (const auto& g : gitSubcommands) {
                         if (lowerToken.empty() || StartsWith(g, lowerToken)) {
@@ -855,7 +828,6 @@ public:
                     return items;
                 }
 
-                // If git checkout / switch / merge -> suggest branches
                 if (input.find(L"checkout ") != std::wstring::npos || input.find(L"switch ") != std::wstring::npos || input.find(L"merge ") != std::wstring::npos) {
                     for (const auto& b : gitInfo.localBranches) {
                         if (lowerToken.empty() || StartsWith(ToLower(b), lowerToken)) {
@@ -889,7 +861,6 @@ public:
             }
 
             if (mainCmd == L"python" || mainCmd == L"py") {
-                // Suggest .py files first
                 for (const auto& f : cwdFiles) {
                     if (EndsWith(ToLower(f), L".py") && (lowerToken.empty() || StartsWith(ToLower(f), lowerToken))) {
                         AutocompleteItem item;
@@ -907,7 +878,6 @@ public:
             }
 
             if (mainCmd == L"clang++" || mainCmd == L"g++") {
-                // Suggest .cpp / .c / .h
                 for (const auto& f : cwdFiles) {
                     std::wstring lf = ToLower(f);
                     if ((EndsWith(lf, L".cpp") || EndsWith(lf, L".c") || EndsWith(lf, L".hpp") || EndsWith(lf, L".h")) &&
@@ -927,7 +897,6 @@ public:
             }
 
             if (mainCmd == L"img") {
-                // Suggest images
                 for (const auto& f : cwdFiles) {
                     std::wstring lf = ToLower(f);
                     if ((EndsWith(lf, L".png") || EndsWith(lf, L".jpg") || EndsWith(lf, L".jpeg") || EndsWith(lf, L".bmp") || EndsWith(lf, L".ico")) &&
@@ -945,7 +914,6 @@ public:
                 }
             }
 
-            // General files & folders in cwd
             for (const auto& d : cwdDirs) {
                 if (lowerToken.empty() || StartsWith(ToLower(d), lowerToken)) {
                     AutocompleteItem item;
@@ -1004,4 +972,4 @@ private:
     }
 };
 
-} // namespace speta
+}

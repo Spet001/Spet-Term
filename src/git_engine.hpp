@@ -203,13 +203,11 @@ public:
         info.isGitRepo = true;
         info.gitDir = gitDir;
 
-        // repoRoot is parent of .git
         wchar_t rootBuf[MAX_PATH];
         wcscpy_s(rootBuf, gitDir.c_str());
         PathRemoveFileSpecW(rootBuf);
         info.repoRoot = rootBuf;
 
-        // 1. Read .git/HEAD
         std::wstring headPath = gitDir + L"\\HEAD";
         std::ifstream headFile(headPath);
         std::string headLine;
@@ -221,7 +219,6 @@ public:
             if (headLine.rfind(refPrefix, 0) == 0) {
                 info.branchName = Utf8ToWide(headLine.substr(refPrefix.size()));
             } else {
-                // Detached HEAD
                 if (headLine.size() >= 7) {
                     info.branchName = Utf8ToWide(headLine.substr(0, 7));
                     info.commitHashShort = info.branchName;
@@ -233,7 +230,6 @@ public:
             info.branchName = L"unknown";
         }
 
-        // 2. Read commit hash from .git/refs/heads/<branch>
         if (!info.branchName.empty() && info.commitHashShort.empty()) {
             std::wstring branchRefPath = gitDir + L"\\refs\\heads\\" + info.branchName;
             std::ifstream branchFile(branchRefPath);
@@ -243,7 +239,6 @@ public:
                     info.commitHashShort = Utf8ToWide(hashLine.substr(0, 7));
                 }
             } else {
-                // Check .git/packed-refs
                 std::wstring packedRefsPath = gitDir + L"\\packed-refs";
                 std::ifstream packedFile(packedRefsPath);
                 if (packedFile.is_open()) {
@@ -268,7 +263,6 @@ public:
             }
         }
 
-        // 3. Read last commit message and relative time from .git/logs/HEAD
         std::wstring logsHeadPath = gitDir + L"\\logs\\HEAD";
         std::ifstream logsFile(logsHeadPath);
         if (logsFile.is_open()) {
@@ -284,10 +278,7 @@ public:
             }
         }
 
-        // 4. Scan local branches from .git/refs/heads/
         ScanBranches(gitDir, info.localBranches);
-
-        // 5. Check if dirty (quick check using index timestamp vs worktree files)
         info.isDirty = CheckIsDirty(info.repoRoot, gitDir);
 
         return info;
@@ -348,7 +339,6 @@ private:
             msg = TrimAscii(msg);
             info.lastCommitMsg = Utf8ToWide(msg);
 
-            // Parse header for sha, author, timestamp
             std::istringstream iss(header);
             std::string fromSha, toSha;
             if (iss >> fromSha >> toSha) {
@@ -360,7 +350,6 @@ private:
                 std::string author;
                 while (iss >> token) {
                     if (!token.empty() && token.front() == '<') {
-                        // email token reached
                         break;
                     }
                     if (!author.empty()) author += " ";
@@ -400,7 +389,6 @@ private:
             FindClose(hFind);
         }
 
-        // Also parse packed-refs
         std::wstring packedRefs = gitDir + L"\\packed-refs";
         std::ifstream pf(packedRefs);
         if (pf.is_open()) {
@@ -622,4 +610,4 @@ private:
     }
 };
 
-} // namespace speta
+}

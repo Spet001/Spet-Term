@@ -11,34 +11,29 @@ public:
         ErrorDiagnosis diag;
         if (exitCode == 0 && lines.empty()) return diag;
 
-        // Collect all text from lines for multi-line and single-line regex/string matching
         std::vector<std::wstring> rawLines;
         for (const auto& l : lines) {
             rawLines.push_back(l.rawText);
         }
 
-        // 1. Check for Python Tracebacks
         if (CheckPythonTraceback(rawLines, diag)) {
             diag.hasError = true;
             diag.errorType = ErrorType::PythonTraceback;
             return diag;
         }
 
-        // 2. Check for C/C++ Compiler Errors (Clang, GCC, MSVC)
         if (CheckCompilerErrors(rawLines, diag)) {
             diag.hasError = true;
             diag.errorType = ErrorType::CompilerError;
             return diag;
         }
 
-        // 3. Check for Git Errors
         if (CheckGitErrors(rawLines, command, diag)) {
             diag.hasError = true;
             diag.errorType = ErrorType::GitError;
             return diag;
         }
 
-        // 4. Check for Command not found / unrecognized
         if (exitCode != 0) {
             if (CheckCommandNotFound(rawLines, command, diag)) {
                 diag.hasError = true;
@@ -99,7 +94,6 @@ private:
             diag.sourceFile = lastFile;
             diag.sourceLine = lastLine;
 
-            // Check ModuleNotFoundError
             size_t modPos = lastException.find(L"ModuleNotFoundError: No module named '");
             if (modPos != std::wstring::npos) {
                 size_t start = modPos + 38;
@@ -197,7 +191,6 @@ private:
                 pushFix = Trim(line.substr(gitPushPos));
             }
 
-            // Rejected push
             if (line.find(L"failed to push some refs") != std::wstring::npos ||
                 line.find(L"Updates were rejected because the remote contains work") != std::wstring::npos) {
                 diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Git: Push Rejeitado" :
@@ -208,7 +201,6 @@ private:
                 return true;
             }
 
-            // Not a git repository
             if (line.find(L"not a git repository") != std::wstring::npos) {
                 diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Git: Não é Repositório" :
                                   ((lang == LanguageMode::EsES) ? L"Git: No es un Repositorio" : L"Git: Not a Repository");
