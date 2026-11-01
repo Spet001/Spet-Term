@@ -40,6 +40,102 @@ struct GitStatusInfo {
     }
 };
 
+struct GitIgnoreRule {
+    std::wstring pattern;
+    bool isDirectoryOnly = false;
+    bool isNegated = false;
+    bool hasSlash = false;
+};
+
+class GitIgnoreMatcher {
+public:
+    std::vector<GitIgnoreRule> rules;
+
+    void Load(const std::wstring& repoRoot, const std::wstring& gitDir) {
+        LoadFile(repoRoot + L"\\.gitignore");
+        LoadFile(gitDir + L"\\info\\exclude");
+    }
+
+    void LoadFile(const std::wstring& path, const std::wstring& prefix = L"") {
+        std::ifstream file(path);
+        if (!file.is_open()) return;
+
+        std::string line;
+        while (std::getline(file, line)) {
+            size_t start = line.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) continue;
+            size_t end = line.find_last_not_of(" \t\r\n");
+            line = line.substr(start, end - start + 1);
+
+            if (line.empty() || line[0] == '#') continue;
+
+            GitIgnoreRule rule;
+            if (line[0] == '!') {
+                rule.isNegated = true;
+                line = line.substr(1);
+            }
+
+            if (!line.empty() && line.back() == '/') {
+                rule.isDirectoryOnly = true;
+                line.pop_back();
+            }
+
+            bool leadingSlash = false;
+            if (!line.empty() && line.front() == '/') {
+                leadingSlash = true;
+                line = line.substr(1);
+            }
+
+            if (leadingSlash || line.find('/') != std::string::npos) {
+                rule.hasSlash = true;
+            }
+
+            std::wstring wpat;
+            for (char c : line) {
+                wpat += (c == '/') ? L'\\' : static_cast<wchar_t>(c);
+            }
+            if (!prefix.empty()) {
+                rule.pattern = prefix + L"\\" + wpat;
+                rule.hasSlash = true;
+            } else {
+                rule.pattern = wpat;
+            }
+            if (!rule.pattern.empty()) {
+                rules.push_back(rule);
+            }
+        }
+    }
+
+    bool IsIgnored(const std::wstring& relPath, const std::wstring& fileName, bool isDir) const {
+        if (_wcsicmp(fileName.c_str(), L".git") == 0) return true;
+        if (_wcsicmp(fileName.c_str(), L".vs") == 0) return true;
+        if (_wcsicmp(fileName.c_str(), L".idea") == 0) return true;
+        if (_wcsicmp(fileName.c_str(), L"node_modules") == 0) return true;
+
+        bool ignored = false;
+        for (const auto& r : rules) {
+            if (r.isDirectoryOnly && !isDir) continue;
+
+            bool match = false;
+            if (r.hasSlash) {
+                match = (PathMatchSpecW(relPath.c_str(), r.pattern.c_str()) != FALSE);
+                if (!match) {
+                    std::wstring dirWildcard = r.pattern + L"\\*";
+                    match = (PathMatchSpecW(relPath.c_str(), dirWildcard.c_str()) != FALSE);
+                }
+            } else {
+                match = (PathMatchSpecW(fileName.c_str(), r.pattern.c_str()) != FALSE) ||
+                        (PathMatchSpecW(relPath.c_str(), r.pattern.c_str()) != FALSE);
+            }
+
+            if (match) {
+                ignored = !r.isNegated;
+            }
+        }
+        return ignored;
+    }
+};
+
 class GitEngine {
 public:
     static std::wstring FindGitDirectory(const std::wstring& startPath) {
@@ -328,11 +424,14 @@ private:
     }
 
     static bool CheckIsDirty(const std::wstring& repoRoot, const std::wstring& gitDir) {
+        GitIgnoreMatcher ignoreMatcher;
+        ignoreMatcher.Load(repoRoot, gitDir);
+
         std::wstring indexPath = gitDir + L"\\index";
         WIN32_FILE_ATTRIBUTE_DATA indexData;
         if (!GetFileAttributesExW(indexPath.c_str(), GetFileExInfoStandard, &indexData)) {
             // No index file exists (untracked files before initial git add)
-            return HasAnyWorktreeFiles(repoRoot);
+            return HasAnyWorktreeFiles(repoRoot, ignoreMatcher);
         }
 
         // Parse Git Index (DIRC format) to check modified and deleted files
@@ -348,7 +447,7 @@ private:
                     return true;
                 }
             }
-            if (HasUntrackedFiles(repoRoot, indexFiles, 0)) {
+            if (HasUntrackedFiles(repoRoot, L"", indexFiles, ignoreMatcher, 0)) {
                 return true;
             }
             return false;
@@ -358,10 +457,10 @@ private:
         ULARGE_INTEGER indexTime;
         indexTime.LowPart = indexData.ftLastWriteTime.dwLowDateTime;
         indexTime.HighPart = indexData.ftLastWriteTime.dwHighDateTime;
-        return ScanDirForNewer(repoRoot, indexTime, 0);
+        return ScanDirForNewer(repoRoot, L"", indexTime, ignoreMatcher, 0);
     }
 
-    static bool HasAnyWorktreeFiles(const std::wstring& dir) {
+    static bool HasAnyWorktreeFiles(const std::wstring& dir, const GitIgnoreMatcher& ignoreMatcher) {
         std::wstring pattern = dir + L"\\*";
         WIN32_FIND_DATAW fd;
         HANDLE hFind = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
@@ -369,7 +468,8 @@ private:
         bool found = false;
         do {
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-            if (_wcsicmp(fd.cFileName, L".git") == 0 || _wcsicmp(fd.cFileName, L".vs") == 0) continue;
+            bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (ignoreMatcher.IsIgnored(fd.cFileName, fd.cFileName, isDir)) continue;
             found = true;
             break;
         } while (FindNextFileW(hFind, &fd));
@@ -427,14 +527,21 @@ private:
             for (char c : sname) {
                 wname += (c == '/') ? L'\\' : static_cast<wchar_t>(c);
             }
-            indexFiles[wname] = fileSizeEntry;
+            indexFiles[ToLower(wname)] = fileSizeEntry;
         }
         return true;
     }
 
-    static bool HasUntrackedFiles(const std::wstring& dir, const std::unordered_map<std::wstring, uint32_t>& indexFiles, int depth) {
-        if (depth > 2) return false;
-        std::wstring pattern = dir + L"\\*";
+    static bool HasUntrackedFiles(
+        const std::wstring& repoRoot,
+        const std::wstring& relDir,
+        const std::unordered_map<std::wstring, uint32_t>& indexFiles,
+        const GitIgnoreMatcher& ignoreMatcher,
+        int depth)
+    {
+        if (depth > 6) return false;
+        std::wstring currentDir = relDir.empty() ? repoRoot : (repoRoot + L"\\" + relDir);
+        std::wstring pattern = currentDir + L"\\*";
         WIN32_FIND_DATAW fd;
         HANDLE hFind = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (hFind == INVALID_HANDLE_VALUE) return false;
@@ -442,29 +549,21 @@ private:
         bool untracked = false;
         do {
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-            if (_wcsicmp(fd.cFileName, L".git") == 0 || _wcsicmp(fd.cFileName, L"node_modules") == 0 ||
-                _wcsicmp(fd.cFileName, L".vs") == 0 || _wcsicmp(fd.cFileName, L"build") == 0 ||
-                _wcsicmp(fd.cFileName, L"bin") == 0 || _wcsicmp(fd.cFileName, L"obj") == 0) {
+
+            bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            std::wstring relPath = relDir.empty() ? fd.cFileName : (relDir + L"\\" + fd.cFileName);
+
+            if (ignoreMatcher.IsIgnored(relPath, fd.cFileName, isDir)) {
                 continue;
             }
 
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-                std::wstring fname = fd.cFileName;
-                bool found = false;
-                for (const auto& kv : indexFiles) {
-                    if (kv.first.size() >= fname.size() &&
-                        kv.first.compare(kv.first.size() - fname.size(), fname.size(), fname) == 0) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
+            if (!isDir) {
+                if (indexFiles.find(ToLower(relPath)) == indexFiles.end()) {
                     untracked = true;
                     break;
                 }
             } else {
-                std::wstring subDir = dir + L"\\" + fd.cFileName;
-                if (HasUntrackedFiles(subDir, indexFiles, depth + 1)) {
+                if (HasUntrackedFiles(repoRoot, relPath, indexFiles, ignoreMatcher, depth + 1)) {
                     untracked = true;
                     break;
                 }
@@ -475,10 +574,17 @@ private:
         return untracked;
     }
 
-    static bool ScanDirForNewer(const std::wstring& dir, const ULARGE_INTEGER& indexTime, int depth) {
-        if (depth > 2) return false;
+    static bool ScanDirForNewer(
+        const std::wstring& repoRoot,
+        const std::wstring& relDir,
+        const ULARGE_INTEGER& indexTime,
+        const GitIgnoreMatcher& ignoreMatcher,
+        int depth)
+    {
+        if (depth > 6) return false;
 
-        std::wstring pattern = dir + L"\\*";
+        std::wstring currentDir = relDir.empty() ? repoRoot : (repoRoot + L"\\" + relDir);
+        std::wstring pattern = currentDir + L"\\*";
         WIN32_FIND_DATAW fd;
         HANDLE hFind = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (hFind == INVALID_HANDLE_VALUE) return false;
@@ -486,9 +592,11 @@ private:
         bool dirty = false;
         do {
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-            if (_wcsicmp(fd.cFileName, L".git") == 0 || _wcsicmp(fd.cFileName, L"node_modules") == 0 ||
-                _wcsicmp(fd.cFileName, L".vs") == 0 || _wcsicmp(fd.cFileName, L"build") == 0 ||
-                _wcsicmp(fd.cFileName, L"bin") == 0 || _wcsicmp(fd.cFileName, L"obj") == 0) {
+
+            bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            std::wstring relPath = relDir.empty() ? fd.cFileName : (relDir + L"\\" + fd.cFileName);
+
+            if (ignoreMatcher.IsIgnored(relPath, fd.cFileName, isDir)) {
                 continue;
             }
 
@@ -496,14 +604,13 @@ private:
             fileTime.LowPart = fd.ftLastWriteTime.dwLowDateTime;
             fileTime.HighPart = fd.ftLastWriteTime.dwHighDateTime;
 
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            if (!isDir) {
                 if (fileTime.QuadPart > indexTime.QuadPart) {
                     dirty = true;
                     break;
                 }
             } else {
-                std::wstring subDir = dir + L"\\" + fd.cFileName;
-                if (ScanDirForNewer(subDir, indexTime, depth + 1)) {
+                if (ScanDirForNewer(repoRoot, relPath, indexTime, ignoreMatcher, depth + 1)) {
                     dirty = true;
                     break;
                 }

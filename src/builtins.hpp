@@ -3,6 +3,7 @@
 #include "common.hpp"
 #include "git_engine.hpp"
 #include "themes.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -130,8 +131,9 @@ public:
             // Handled externally or clears current pane
             block.outputLines.clear();
         } else if (cmd == L"history") {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine title;
-            title.rawText = L"Histórico de Comandos";
+            title.rawText = (lang == LanguageMode::PtBR) ? L"Histórico de Comandos" : ((lang == LanguageMode::EsES) ? L"Historial de Comandos" : L"Command History");
             title.spans.push_back({ title.rawText, theme.accent, theme.bg, true });
             block.outputLines.push_back(title);
 
@@ -146,21 +148,26 @@ public:
                     block.outputLines.push_back(sl);
                 }
             } else {
-                AddLine(L"Nenhum comando no histórico recente.", theme.textDim);
+                AddLine((lang == LanguageMode::PtBR) ? L"Nenhum comando no histórico recente." : ((lang == LanguageMode::EsES) ? L"Ningún comando en el historial reciente." : L"No commands in recent history."), theme.textDim);
             }
         } else if (cmd == L"split") {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             std::wstring a = ToLower(args);
             bool vertical = (a == L"v" || a == L"vertical");
             if (a == L"close" || a == L"w") {
                 if (onClosePane) onClosePane();
-                AddLine(L"Fechando painel ativo...", theme.textDim);
+                AddLine((lang == LanguageMode::PtBR) ? L"Fechando painel ativo..." : ((lang == LanguageMode::EsES) ? L"Cerrando panel activo..." : L"Closing active pane..."), theme.textDim);
             } else if (onSplit) {
                 onSplit(vertical);
-                AddLine(L"\u2714 Painel dividido com sucesso (" + (vertical ? std::wstring(L"vertical") : std::wstring(L"horizontal")) + L")", theme.syntaxValidCommand);
+                std::wstring msg = (lang == LanguageMode::PtBR) ? (L"Painel dividido com sucesso (" + (vertical ? std::wstring(L"vertical") : std::wstring(L"horizontal")) + L")") :
+                                   ((lang == LanguageMode::EsES) ? (L"Panel dividido con éxito (" + (vertical ? std::wstring(L"vertical") : std::wstring(L"horizontal")) + L")") :
+                                   (L"Pane split successfully (" + (vertical ? std::wstring(L"vertical") : std::wstring(L"horizontal")) + L")"));
+                AddLine(msg, theme.syntaxValidCommand);
             }
         } else if (cmd == L"quake") {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             if (onQuake) onQuake();
-            AddLine(L"\u2714 Quake Mode acionado.", theme.accent);
+            AddLine((lang == LanguageMode::PtBR) ? L"Quake Mode acionado." : ((lang == LanguageMode::EsES) ? L"Modo Quake activado." : L"Quake Mode activated."), theme.accent);
         } else if (cmd == L"exit") {
             if (onClosePane) onClosePane();
         }
@@ -180,8 +187,11 @@ private:
             }
         } else if (target == L"-") {
             if (prevCwd.empty()) {
+                LanguageMode lang = I18n::GetResolvedLanguage();
                 StyledLine sl;
-                sl.rawText = L"Nenhum diretório anterior.";
+                sl.rawText = (lang == LanguageMode::PtBR) ? L"Nenhum diretório anterior." :
+                             ((lang == LanguageMode::EsES) ? L"Ningún directorio anterior." :
+                             L"No previous directory.");
                 sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
                 block.outputLines.push_back(sl);
                 block.exitCode = 1;
@@ -208,8 +218,11 @@ private:
             GetCurrentDirectoryW(MAX_PATH, actual);
             cwd = actual;
         } else {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine sl;
-            sl.rawText = L"Não foi possível encontrar o caminho: " + target;
+            sl.rawText = (lang == LanguageMode::PtBR) ? (L"Não foi possível encontrar o caminho: " + target) :
+                         ((lang == LanguageMode::EsES) ? (L"No se pudo encontrar la ruta: " + target) :
+                         (L"Could not find path: " + target));
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -234,8 +247,11 @@ private:
         HANDLE hFind = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
 
         if (hFind == INVALID_HANDLE_VALUE) {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine sl;
-            sl.rawText = L"Diretório não encontrado: " + searchDir;
+            sl.rawText = (lang == LanguageMode::PtBR) ? (L"Diretório não encontrado: " + searchDir) :
+                         ((lang == LanguageMode::EsES) ? (L"Directorio no encontrado: " + searchDir) :
+                         (L"Directory not found: " + searchDir));
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -244,8 +260,11 @@ private:
 
         // Header line
         {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine header;
-            header.rawText = L"    Tipo   Data/Hora          Tamanho   Nome";
+            header.rawText = (lang == LanguageMode::PtBR) ? L"    Tipo   Data/Hora          Tamanho   Nome" :
+                             ((lang == LanguageMode::EsES) ? L"    Tipo   Fecha/Hora         Tamaño    Nombre" :
+                             L"    Type   Date/Time          Size      Name");
             header.spans.push_back({ header.rawText, theme.textDim, theme.bg, true });
             block.outputLines.push_back(header);
 
@@ -351,9 +370,16 @@ private:
 
         // Summary footer
         {
+            LanguageMode lang = I18n::GetResolvedLanguage();
             StyledLine summary;
             wchar_t sumBuf[128];
-            swprintf_s(sumBuf, L"\n    Total: %d arquivo(s) (%s), %d pasta(s)", fileCount, FormatBytes(totalBytes).c_str(), dirCount);
+            if (lang == LanguageMode::PtBR) {
+                swprintf_s(sumBuf, L"\n    Total: %d arquivo(s) (%s), %d pasta(s)", fileCount, FormatBytes(totalBytes).c_str(), dirCount);
+            } else if (lang == LanguageMode::EsES) {
+                swprintf_s(sumBuf, L"\n    Total: %d archivo(s) (%s), %d carpeta(s)", fileCount, FormatBytes(totalBytes).c_str(), dirCount);
+            } else {
+                swprintf_s(sumBuf, L"\n    Total: %d file(s) (%s), %d folder(s)", fileCount, FormatBytes(totalBytes).c_str(), dirCount);
+            }
             summary.rawText = sumBuf;
             summary.spans.push_back({ summary.rawText, theme.textDim, theme.bg, false });
             block.outputLines.push_back(summary);
@@ -367,9 +393,10 @@ private:
         const Theme& theme,
         std::function<ID2D1Bitmap*(const std::wstring&, D2D1_SIZE_F&)> onImageLoad
     ) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         if (args.empty()) {
             StyledLine sl;
-            sl.rawText = L"Uso: cat <arquivo>";
+            sl.rawText = (lang == LanguageMode::PtBR) ? L"Uso: cat <arquivo>" : ((lang == LanguageMode::EsES) ? L"Uso: cat <archivo>" : L"Usage: cat <file>");
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -398,7 +425,9 @@ private:
         std::ifstream file(resolved);
         if (!file.is_open()) {
             StyledLine sl;
-            sl.rawText = L"Arquivo não encontrado: " + target;
+            sl.rawText = (lang == LanguageMode::PtBR) ? (L"Arquivo não encontrado: " + target) :
+                         ((lang == LanguageMode::EsES) ? (L"Archivo no encontrado: " + target) :
+                         (L"File not found: " + target));
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -430,7 +459,9 @@ private:
 
         if (lineNum > 500) {
             StyledLine sl;
-            sl.rawText = L"... [Arquivo truncado em 500 linhas]";
+            sl.rawText = (lang == LanguageMode::PtBR) ? L"... [Arquivo truncado em 500 linhas]" :
+                         ((lang == LanguageMode::EsES) ? L"... [Archivo truncado en 500 líneas]" :
+                         L"... [File truncated at 500 lines]");
             sl.spans.push_back({ sl.rawText, theme.textDim });
             block.outputLines.push_back(sl);
         }
@@ -443,9 +474,10 @@ private:
         const Theme& theme,
         std::function<ID2D1Bitmap*(const std::wstring&, D2D1_SIZE_F&)> onImageLoad
     ) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         if (args.empty()) {
             StyledLine sl;
-            sl.rawText = L"Uso: img <caminho-da-imagem>";
+            sl.rawText = (lang == LanguageMode::PtBR) ? L"Uso: img <caminho-da-imagem>" : ((lang == LanguageMode::EsES) ? L"Uso: img <ruta-de-imagen>" : L"Usage: img <image-path>");
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -483,13 +515,16 @@ private:
 
             StyledLine sl;
             wchar_t infoBuf[128];
-            swprintf_s(infoBuf, L"[IMG] Imagem: %s (%.0fx%.0f px, %s)", PathFindFileNameW(resolved), size.width, size.height, FormatBytes(bytes).c_str());
+            const wchar_t* imgTag = (lang == LanguageMode::PtBR) ? L"Imagem" : ((lang == LanguageMode::EsES) ? L"Imagen" : L"Image");
+            swprintf_s(infoBuf, L"[IMG] %s: %s (%.0fx%.0f px, %s)", imgTag, PathFindFileNameW(resolved), size.width, size.height, FormatBytes(bytes).c_str());
             sl.rawText = infoBuf;
             sl.spans.push_back({ sl.rawText, theme.accent, theme.bg, true });
             block.outputLines.push_back(sl);
         } else {
             StyledLine sl;
-            sl.rawText = L"Não foi possível decodificar a imagem: " + target;
+            sl.rawText = (lang == LanguageMode::PtBR) ? (L"Não foi possível decodificar a imagem: " + target) :
+                         ((lang == LanguageMode::EsES) ? (L"No se pudo decodificar la imagen: " + target) :
+                         (L"Could not decode image: " + target));
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -497,10 +532,13 @@ private:
     }
 
     static void ExecuteGStatus(const std::wstring& cwd, CommandBlock& block, const Theme& theme) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         GitStatusInfo info = GitEngine::InspectRepository(cwd);
         if (!info.isGitRepo) {
             StyledLine sl;
-            sl.rawText = L"Diretório atual não é um repositório Git.";
+            sl.rawText = (lang == LanguageMode::PtBR) ? L"Diretório atual não é um repositório Git." :
+                         ((lang == LanguageMode::EsES) ? L"El directorio actual no es un repositorio Git." :
+                         L"Current directory is not a Git repository.");
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -520,20 +558,31 @@ private:
         title.spans.push_back({ title.rawText, theme.accent, theme.bg, true });
         block.outputLines.push_back(title);
 
-        AddRow(L"Branch Atual ", info.branchName + (info.isDirty ? L" *" : L""), info.isDirty ? theme.gitDirty : theme.gitClean);
+        const wchar_t* branchLabel = (lang == LanguageMode::PtBR) ? L"Branch Atual " : ((lang == LanguageMode::EsES) ? L"Rama Actual  " : L"Branch       ");
+        const wchar_t* commitLabel = (lang == LanguageMode::PtBR) ? L"Último Commit" : ((lang == LanguageMode::EsES) ? L"Último Commit" : L"Last Commit  ");
+        const wchar_t* msgLabel = (lang == LanguageMode::PtBR) ? L"Mensagem     " : ((lang == LanguageMode::EsES) ? L"Mensaje      " : L"Message      ");
+        const wchar_t* authorLabel = (lang == LanguageMode::PtBR) ? L"Autor        " : ((lang == LanguageMode::EsES) ? L"Autor        " : L"Author       ");
+        const wchar_t* timeLabel = (lang == LanguageMode::PtBR) ? L"Tempo        " : ((lang == LanguageMode::EsES) ? L"Tiempo       " : L"Time         ");
+        const wchar_t* statusLabel = (lang == LanguageMode::PtBR) ? L"Status       " : ((lang == LanguageMode::EsES) ? L"Estado       " : L"Status       ");
+
+        AddRow(branchLabel, info.branchName + (info.isDirty ? L" *" : L""), info.isDirty ? theme.gitDirty : theme.gitClean);
         if (!info.commitHashShort.empty()) {
-            AddRow(L"Último Commit", info.commitHashShort, theme.syntaxNumber);
+            AddRow(commitLabel, info.commitHashShort, theme.syntaxNumber);
         }
         if (!info.lastCommitMsg.empty()) {
-            AddRow(L"Mensagem     ", info.lastCommitMsg, theme.textPrimary);
+            AddRow(msgLabel, info.lastCommitMsg, theme.textPrimary);
         }
         if (!info.lastCommitAuthor.empty()) {
-            AddRow(L"Autor        ", info.lastCommitAuthor, theme.accent);
+            AddRow(authorLabel, info.lastCommitAuthor, theme.accent);
         }
         if (!info.lastCommitRelativeTime.empty()) {
-            AddRow(L"Tempo        ", info.lastCommitRelativeTime, theme.textDim);
+            AddRow(timeLabel, info.lastCommitRelativeTime, theme.textDim);
         }
-        AddRow(L"Status       ", info.isDirty ? L"Modificado (arquivos alterados no disco)" : L"Limpo (Working tree clean)", info.isDirty ? theme.gitDirty : theme.gitClean);
+
+        std::wstring statusVal = info.isDirty ?
+            ((lang == LanguageMode::PtBR) ? L"Modificado (arquivos alterados no disco)" : ((lang == LanguageMode::EsES) ? L"Modificado (archivos alterados en disco)" : L"Modified (files changed on disk)")) :
+            ((lang == LanguageMode::PtBR) ? L"Limpo (Working tree clean)" : ((lang == LanguageMode::EsES) ? L"Limpio (Working tree clean)" : L"Clean (Working tree clean)"));
+        AddRow(statusLabel, statusVal, info.isDirty ? theme.gitDirty : theme.gitClean);
 
         if (!info.localBranches.empty()) {
             std::wstring bList;
@@ -541,22 +590,28 @@ private:
                 if (i > 0) bList += L", ";
                 bList += info.localBranches[i];
             }
-            AddRow(L"Branches     ", bList, theme.textDim);
+            const wchar_t* branchesLabel = (lang == LanguageMode::PtBR) ? L"Branches     " : ((lang == LanguageMode::EsES) ? L"Ramas        " : L"Branches     ");
+            AddRow(branchesLabel, bList, theme.textDim);
         }
     }
 
     static void ExecuteGLog(const std::wstring& cwd, CommandBlock& block, const Theme& theme) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         auto logs = GitEngine::GetRecentCommitLogs(cwd, 10);
         if (logs.empty()) {
             StyledLine sl;
-            sl.rawText = L"Nenhum histórico de commit encontrado ou não é um repositório Git.";
+            sl.rawText = (lang == LanguageMode::PtBR) ? L"Nenhum histórico de commit encontrado ou não é um repositório Git." :
+                         ((lang == LanguageMode::EsES) ? L"No se encontró historial de commits o no es un repositorio Git." :
+                         L"No commit history found or not a Git repository.");
             sl.spans.push_back({ sl.rawText, theme.textDim });
             block.outputLines.push_back(sl);
             return;
         }
 
         StyledLine title;
-        title.rawText = L"Histórico Recente de Commits (Zero-Process)";
+        title.rawText = (lang == LanguageMode::PtBR) ? L"Histórico Recente de Commits (Zero-Process)" :
+                        ((lang == LanguageMode::EsES) ? L"Historial Reciente de Commits (Zero-Process)" :
+                        L"Recent Commit History (Zero-Process)");
         title.spans.push_back({ title.rawText, theme.accent, theme.bg, true });
         block.outputLines.push_back(title);
 
@@ -569,10 +624,13 @@ private:
     }
 
     static void ExecuteGBranch(const std::wstring& cwd, CommandBlock& block, const Theme& theme) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         GitStatusInfo info = GitEngine::InspectRepository(cwd);
         if (!info.isGitRepo) {
             StyledLine sl;
-            sl.rawText = L"Não é um repositório Git.";
+            sl.rawText = (lang == LanguageMode::PtBR) ? L"Não é um repositório Git." :
+                         ((lang == LanguageMode::EsES) ? L"No es un repositorio Git." :
+                         L"Not a Git repository.");
             sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
             block.outputLines.push_back(sl);
             block.exitCode = 1;
@@ -580,7 +638,9 @@ private:
         }
 
         StyledLine title;
-        title.rawText = L"Branches Locais";
+        title.rawText = (lang == LanguageMode::PtBR) ? L"Branches Locais" :
+                        ((lang == LanguageMode::EsES) ? L"Ramas Locales" :
+                        L"Local Branches");
         title.spans.push_back({ title.rawText, theme.accent, theme.bg, true });
         block.outputLines.push_back(title);
 
@@ -588,7 +648,8 @@ private:
             bool current = (b == info.branchName);
             StyledLine sl;
             if (current) {
-                sl.rawText = L"  * " + b + L" (atual)";
+                const wchar_t* curTag = (lang == LanguageMode::PtBR) ? L" (atual)" : ((lang == LanguageMode::EsES) ? L" (actual)" : L" (current)");
+                sl.rawText = L"  * " + b + curTag;
                 sl.spans.push_back({ sl.rawText, theme.gitClean, theme.bg, true });
             } else {
                 sl.rawText = L"    " + b;
@@ -598,9 +659,17 @@ private:
         }
     }
 
+public:
     static void ExecuteHelp(CommandBlock& block, const Theme& theme) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         StyledLine title;
-        title.rawText = L"Spet@term: Guia de Comandos & Atalhos";
+        if (lang == LanguageMode::PtBR) {
+            title.rawText = L"Spet@term: Guia de Comandos & Atalhos";
+        } else if (lang == LanguageMode::EsES) {
+            title.rawText = L"Spet@term: Guía de Comandos y Atajos";
+        } else {
+            title.rawText = L"Spet@term: Command & Shortcut Guide";
+        }
         title.spans.push_back({ title.rawText, theme.accent, theme.bg, true });
         block.outputLines.push_back(title);
 
@@ -613,21 +682,55 @@ private:
             block.outputLines.push_back(sl);
         };
 
-        AddH(L"cd <dir> | cd -", L"Navegação ultrarrápida com memória do último diretório");
-        AddH(L"ls / dir", L"Listagem de arquivos colorida com ícones, badges e estatísticas");
-        AddH(L"cat <file>", L"Exibe arquivo de código com números de linha e sintaxe");
-        AddH(L"img <arquivo>", L"Renderiza imagem (.png, .jpg, .bmp) direto dentro do terminal via GPU");
-        AddH(L"gstatus / glog", L"Comandos Git Zero-Process (< 1ms sem invocar processo git.exe)");
-        AddH(L"gbranch", L"Lista todas as branches locais do repositório");
-        AddH(L"theme <nome>", L"Alterna entre Pitch Black, Galaxy, VS Code Like, Blue e Light");
-        AddH(L"mode <pw|cmd>", L"Alterna motor entre PowerShell (\u26A1) e CMD (>_)");
-        AddH(L"clear / cls", L"Limpa os blocos do terminal ativo");
-        AddH(L"Ctrl+Shift+P", L"Abre Command Palette estilo VS Code com busca fuzzy e live theme preview");
-        AddH(L"Ctrl+Tab", L"Alterna instantaneamente entre Modo PowerShell e Modo CMD");
-        AddH(L"Alt+Shift+D / V", L"Divide terminal em Split Panes (Horizontal / Vertical)");
-        AddH(L"Alt+Shift+W", L"Fecha o painel ativo");
-        AddH(L"Alt+F", L"Aplica correção sugerida pelo Smart Error Doctor com 1 clique");
-        AddH(L"F12 / Win+`", L"Quake Mode: desliza terminal suavemente do topo da tela");
+        if (lang == LanguageMode::PtBR) {
+            AddH(L"cd <dir> | cd -", L"Navegação ultrarrápida com memória do último diretório");
+            AddH(L"ls / dir", L"Listagem de arquivos colorida com ícones, badges e estatísticas");
+            AddH(L"cat <file>", L"Exibe arquivo de código com números de linha e sintaxe");
+            AddH(L"img <arquivo>", L"Renderiza imagem (.png, .jpg, .bmp) direto dentro do terminal via GPU");
+            AddH(L"gstatus / glog", L"Comandos Git Zero-Process (< 1ms sem invocar processo git.exe)");
+            AddH(L"gbranch", L"Lista todas as branches locais do repositório");
+            AddH(L"theme <nome>", L"Alterna entre Pitch Black, Galaxy, VS Code Like, Blue e Light");
+            AddH(L"mode <pw|cmd>", L"Alterna motor entre PowerShell e CMD");
+            AddH(L"clear / cls", L"Limpa os blocos do terminal ativo");
+            AddH(L"Ctrl+Shift+P", L"Abre Command Palette estilo VS Code com busca fuzzy e live theme preview");
+            AddH(L"Ctrl+Tab", L"Alterna instantaneamente entre Modo PowerShell e Modo CMD");
+            AddH(L"Alt+Shift+D / V", L"Divide terminal em Split Panes (Horizontal / Vertical)");
+            AddH(L"Alt+Shift+W", L"Fecha o painel ativo");
+            AddH(L"Alt+F", L"Aplica correção sugerida pelo Smart Error Doctor com 1 clique");
+            AddH(L"F12 / Win+`", L"Quake Mode: desliza terminal suavemente do topo da tela");
+        } else if (lang == LanguageMode::EsES) {
+            AddH(L"cd <dir> | cd -", L"Navegación ultrarrápida con memoria del directorio anterior");
+            AddH(L"ls / dir", L"Listado de archivos coloreado con iconos, etiquetas y estadísticas");
+            AddH(L"cat <file>", L"Muestra archivo de código con números de línea y sintaxis");
+            AddH(L"img <archivo>", L"Renderiza imagen (.png, .jpg, .bmp) directamente en la terminal mediante GPU");
+            AddH(L"gstatus / glog", L"Comandos Git Zero-Process (< 1ms sin invocar proceso git.exe)");
+            AddH(L"gbranch", L"Lista todas las ramas locales del repositorio");
+            AddH(L"theme <nombre>", L"Alterna entre Pitch Black, Galaxy, VS Code Like, Blue y Light");
+            AddH(L"mode <pw|cmd>", L"Alterna motor entre PowerShell y CMD");
+            AddH(L"clear / cls", L"Limpia los bloques de la terminal activa");
+            AddH(L"Ctrl+Shift+P", L"Abre Command Palette estilo VS Code con búsqueda difusa y vista previa de temas");
+            AddH(L"Ctrl+Tab", L"Alterna instantáneamente entre Modo PowerShell e Modo CMD");
+            AddH(L"Alt+Shift+D / V", L"Divide la terminal en Paneles Divididos (Horizontal / Vertical)");
+            AddH(L"Alt+Shift+W", L"Cierra el panel activo");
+            AddH(L"Alt+F", L"Aplica corrección sugerida por Smart Error Doctor con 1 clic");
+            AddH(L"F12 / Win+`", L"Modo Quake: desliza la terminal suavemente desde la parte superior");
+        } else {
+            AddH(L"cd <dir> | cd -", L"Fast navigation with memory of the previous directory");
+            AddH(L"ls / dir", L"Colorized file listing with icons, badges and statistics");
+            AddH(L"cat <file>", L"Display code file with line numbers and syntax styling");
+            AddH(L"img <file>", L"Render image (.png, .jpg, .bmp) directly inside terminal via GPU");
+            AddH(L"gstatus / glog", L"Zero-Process Git commands (< 1ms without invoking git.exe)");
+            AddH(L"gbranch", L"List all local branches in the repository");
+            AddH(L"theme <name>", L"Switch between Pitch Black, Galaxy, VS Code Like, Blue and Light");
+            AddH(L"mode <pw|cmd>", L"Switch engine between PowerShell and CMD");
+            AddH(L"clear / cls", L"Clear blocks in the active terminal");
+            AddH(L"Ctrl+Shift+P", L"Open VS Code style Command Palette with fuzzy search and live theme preview");
+            AddH(L"Ctrl+Tab", L"Instantly toggle between PowerShell and CMD modes");
+            AddH(L"Alt+Shift+D / V", L"Split terminal into Split Panes (Horizontal / Vertical)");
+            AddH(L"Alt+Shift+W", L"Close the active pane");
+            AddH(L"Alt+F", L"Apply Smart Error Doctor suggestion with 1 click");
+            AddH(L"F12 / Win+`", L"Quake Mode: smoothly slide terminal from the top of the screen");
+        }
     }
 };
 

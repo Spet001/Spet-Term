@@ -2073,9 +2073,19 @@ public:
 
         // Tab to trigger autocomplete or accept Levenshtein suggestion
         if (vk == VK_TAB) {
-            if (!pane.syntaxAnalysis.ghostSuggestion.empty() && pane.syntaxAnalysis.ghostSuggestion.find(L"Você quis dizer: ") != std::wstring::npos) {
-                size_t p = pane.syntaxAnalysis.ghostSuggestion.find(L"Você quis dizer: ");
-                std::wstring sugg = pane.syntaxAnalysis.ghostSuggestion.substr(p + 17);
+            size_t p = std::wstring::npos;
+            size_t prefixLen = 0;
+            if (!pane.syntaxAnalysis.ghostSuggestion.empty()) {
+                if ((p = pane.syntaxAnalysis.ghostSuggestion.find(L"Você quis dizer: ")) != std::wstring::npos) {
+                    prefixLen = 17;
+                } else if ((p = pane.syntaxAnalysis.ghostSuggestion.find(L"Did you mean: ")) != std::wstring::npos) {
+                    prefixLen = 14;
+                } else if ((p = pane.syntaxAnalysis.ghostSuggestion.find(L"¿Quiso decir: ")) != std::wstring::npos) {
+                    prefixLen = 14;
+                }
+            }
+            if (p != std::wstring::npos) {
+                std::wstring sugg = pane.syntaxAnalysis.ghostSuggestion.substr(p + prefixLen);
                 size_t q = sugg.find(L" ?");
                 if (q != std::wstring::npos) sugg = sugg.substr(0, q);
                 pane.inputLine = sugg;

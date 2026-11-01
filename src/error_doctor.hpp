@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -51,6 +52,7 @@ public:
 
 private:
     static bool CheckPythonTraceback(const std::vector<std::wstring>& lines, ErrorDiagnosis& diag) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         bool inTraceback = false;
         std::wstring lastFile;
         int lastLine = 0;
@@ -91,7 +93,8 @@ private:
         }
 
         if (inTraceback && !lastException.empty()) {
-            diag.errorTitle = L"Python Exception Detectada";
+            diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Python: Exceção Detectada" :
+                              ((lang == LanguageMode::EsES) ? L"Python: Excepción Detectada" : L"Python Exception Detected");
             diag.errorMessage = lastException;
             diag.sourceFile = lastFile;
             diag.sourceLine = lastLine;
@@ -106,7 +109,9 @@ private:
                     diag.suggestedFix = L"pip install " + modName;
                 }
             } else if (lastException.find(L"SyntaxError") != std::wstring::npos) {
-                diag.suggestedFix = L"Revisar sintaxe no arquivo " + lastFile + L" linha " + std::to_wstring(lastLine);
+                diag.suggestedFix = (lang == LanguageMode::PtBR) ? (L"Revisar sintaxe no arquivo " + lastFile + L" linha " + std::to_wstring(lastLine)) :
+                                    ((lang == LanguageMode::EsES) ? (L"Revisar sintaxis en el archivo " + lastFile + L" línea " + std::to_wstring(lastLine)) :
+                                    (L"Review syntax in file " + lastFile + L" line " + std::to_wstring(lastLine)));
             }
             return true;
         }
@@ -115,6 +120,7 @@ private:
     }
 
     static bool CheckCompilerErrors(const std::vector<std::wstring>& lines, ErrorDiagnosis& diag) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         for (const auto& line : lines) {
             // Clang / GCC format: file:line:col: error: message
             size_t errPos = line.find(L": error:");
@@ -144,9 +150,12 @@ private:
                             }
                         } catch (...) {}
                     }
-                    diag.errorTitle = L"Erro de Compilação C/C++";
+                    diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Erro de Compilação C/C++" :
+                                      ((lang == LanguageMode::EsES) ? L"Error de Compilación C/C++" : L"C/C++ Compilation Error");
                     diag.errorMessage = Trim(line.substr(errPos + 1));
-                    diag.suggestedFix = L"Abrir " + diag.sourceFile + L" na linha " + std::to_wstring(diag.sourceLine);
+                    diag.suggestedFix = (lang == LanguageMode::PtBR) ? (L"Abrir " + diag.sourceFile + L" na linha " + std::to_wstring(diag.sourceLine)) :
+                                        ((lang == LanguageMode::EsES) ? (L"Abrir " + diag.sourceFile + L" en la línea " + std::to_wstring(diag.sourceLine)) :
+                                        (L"Open " + diag.sourceFile + L" at line " + std::to_wstring(diag.sourceLine)));
                     return true;
                 }
             }
@@ -161,9 +170,12 @@ private:
                     try {
                         diag.sourceLine = std::stoi(lineNumStr);
                     } catch (...) {}
-                    diag.errorTitle = L"Erro de Compilação MSVC";
+                    diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Erro de Compilação MSVC" :
+                                      ((lang == LanguageMode::EsES) ? L"Error de Compilación MSVC" : L"MSVC Compilation Error");
                     diag.errorMessage = Trim(line.substr(msvcErr + 2));
-                    diag.suggestedFix = L"Abrir " + diag.sourceFile + L" na linha " + std::to_wstring(diag.sourceLine);
+                    diag.suggestedFix = (lang == LanguageMode::PtBR) ? (L"Abrir " + diag.sourceFile + L" na linha " + std::to_wstring(diag.sourceLine)) :
+                                        ((lang == LanguageMode::EsES) ? (L"Abrir " + diag.sourceFile + L" en la línea " + std::to_wstring(diag.sourceLine)) :
+                                        (L"Open " + diag.sourceFile + L" at line " + std::to_wstring(diag.sourceLine)));
                     return true;
                 }
             }
@@ -172,6 +184,7 @@ private:
     }
 
     static bool CheckGitErrors(const std::vector<std::wstring>& lines, const std::wstring& cmd, ErrorDiagnosis& diag) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         bool hasNoUpstream = false;
         std::wstring pushFix;
 
@@ -187,24 +200,30 @@ private:
             // Rejected push
             if (line.find(L"failed to push some refs") != std::wstring::npos ||
                 line.find(L"Updates were rejected because the remote contains work") != std::wstring::npos) {
-                diag.errorTitle = L"Git: Push Rejeitado";
-                diag.errorMessage = L"O repositório remoto contém commits mais novos.";
+                diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Git: Push Rejeitado" :
+                                  ((lang == LanguageMode::EsES) ? L"Git: Push Rechazado" : L"Git: Push Rejected");
+                diag.errorMessage = (lang == LanguageMode::PtBR) ? L"O repositório remoto contém commits mais novos." :
+                                    ((lang == LanguageMode::EsES) ? L"El repositorio remoto contiene commits más recientes." : L"The remote repository contains newer commits.");
                 diag.suggestedFix = L"git pull --rebase";
                 return true;
             }
 
             // Not a git repository
             if (line.find(L"not a git repository") != std::wstring::npos) {
-                diag.errorTitle = L"Git: Não é Repositório";
-                diag.errorMessage = L"A pasta atual não é um repositório git.";
+                diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Git: Não é Repositório" :
+                                  ((lang == LanguageMode::EsES) ? L"Git: No es un Repositorio" : L"Git: Not a Repository");
+                diag.errorMessage = (lang == LanguageMode::PtBR) ? L"A pasta atual não é um repositório git." :
+                                    ((lang == LanguageMode::EsES) ? L"La carpeta actual no es un repositorio git." : L"The current folder is not a git repository.");
                 diag.suggestedFix = L"git init";
                 return true;
             }
         }
 
         if (hasNoUpstream) {
-            diag.errorTitle = L"Git: Branch sem Upstream";
-            diag.errorMessage = L"A branch local ainda não está conectada ao repositório remoto.";
+            diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Git: Branch sem Upstream" :
+                              ((lang == LanguageMode::EsES) ? L"Git: Rama sin Upstream" : L"Git: Upstream Branch Not Set");
+            diag.errorMessage = (lang == LanguageMode::PtBR) ? L"A branch local ainda não está conectada ao repositório remoto." :
+                                ((lang == LanguageMode::EsES) ? L"La rama local aún no está conectada al repositorio remoto." : L"The local branch is not tracking a remote branch yet.");
             diag.suggestedFix = !pushFix.empty() ? pushFix : L"git push -u origin HEAD";
             return true;
         }
@@ -213,11 +232,13 @@ private:
     }
 
     static bool CheckCommandNotFound(const std::vector<std::wstring>& lines, const std::wstring& cmd, ErrorDiagnosis& diag) {
+        LanguageMode lang = I18n::GetResolvedLanguage();
         for (const auto& line : lines) {
             if (line.find(L"is not recognized as an internal or external command") != std::wstring::npos ||
                 line.find(L"não é reconhecido como um comando interno") != std::wstring::npos ||
                 line.find(L"The term '") != std::wstring::npos) {
-                diag.errorTitle = L"Comando Não Encontrado";
+                diag.errorTitle = (lang == LanguageMode::PtBR) ? L"Comando Não Encontrado" :
+                                  ((lang == LanguageMode::EsES) ? L"Comando No Encontrado" : L"Command Not Found");
                 diag.errorMessage = line;
                 return true;
             }

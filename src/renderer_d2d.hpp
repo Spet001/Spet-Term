@@ -2321,7 +2321,9 @@ public:
 
                     float fixRight = streamX + streamW - 8.0f;
                     if (!blk.diagnosis.suggestedFix.empty()) {
-                        std::wstring fixBtn = L"Aplicar: " + blk.diagnosis.suggestedFix;
+                        LanguageMode lang = I18n::GetResolvedLanguage();
+                        std::wstring fixPrefix = (lang == LanguageMode::PtBR) ? L"Aplicar: " : ((lang == LanguageMode::EsES) ? L"Aplicar: " : L"Apply: ");
+                        std::wstring fixBtn = fixPrefix + blk.diagnosis.suggestedFix;
                         float fixW = MeasureStringWidth(fixBtn, pUIFormatSmall) + 26.0f;
                         blk.fixButtonRect = D2D1::RectF(fixRight - fixW, curY + 3.0f, fixRight, curY + barH - 3.0f);
 
@@ -2338,7 +2340,9 @@ public:
                     }
 
                     if (!blk.diagnosis.sourceFile.empty()) {
-                        std::wstring fileLink = L"Abrir " + blk.diagnosis.sourceFile + L":" + std::to_wstring(blk.diagnosis.sourceLine);
+                        LanguageMode lang = I18n::GetResolvedLanguage();
+                        std::wstring openPrefix = (lang == LanguageMode::PtBR) ? L"Abrir " : ((lang == LanguageMode::EsES) ? L"Abrir " : L"Open ");
+                        std::wstring fileLink = openPrefix + blk.diagnosis.sourceFile + L":" + std::to_wstring(blk.diagnosis.sourceLine);
                         float flW = MeasureStringWidth(fileLink, pUIFormatSmall) + 16.0f;
                         blk.fileLinkRect = D2D1::RectF(fixRight - flW, curY + 3.0f, fixRight, curY + barH - 3.0f);
 

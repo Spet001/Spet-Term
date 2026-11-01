@@ -2,6 +2,7 @@
 
 #include "common.hpp"
 #include "git_engine.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -537,11 +538,24 @@ public:
                     tok.isUnderlined = true;
 
                     // Suggest closest command
+                    LanguageMode lang = I18n::GetResolvedLanguage();
                     std::wstring suggestion = FindClosestCommand(word);
                     if (!suggestion.empty()) {
-                        analysis.ghostSuggestion = L"\u26A0 Comando não encontrado. Você quis dizer: " + suggestion + L" ? [Tab para corrigir]";
+                        if (lang == LanguageMode::PtBR) {
+                            analysis.ghostSuggestion = L"\u26A0 Comando não encontrado. Você quis dizer: " + suggestion + L" ? [Tab para corrigir]";
+                        } else if (lang == LanguageMode::EsES) {
+                            analysis.ghostSuggestion = L"\u26A0 Comando no encontrado. ¿Quiso decir: " + suggestion + L" ? [Tab para corregir]";
+                        } else {
+                            analysis.ghostSuggestion = L"\u26A0 Command not found. Did you mean: " + suggestion + L" ? [Tab to fix]";
+                        }
                     } else {
-                        analysis.ghostSuggestion = L"\u26A0 Comando não encontrado no PATH ou built-ins";
+                        if (lang == LanguageMode::PtBR) {
+                            analysis.ghostSuggestion = L"\u26A0 Comando não encontrado no PATH ou built-ins";
+                        } else if (lang == LanguageMode::EsES) {
+                            analysis.ghostSuggestion = L"\u26A0 Comando no encontrado en PATH o built-ins";
+                        } else {
+                            analysis.ghostSuggestion = L"\u26A0 Command not found in PATH or built-ins";
+                        }
                     }
                 }
                 isFirstToken = false;
@@ -769,7 +783,9 @@ public:
                     item.text = b;
                     item.displayText = b;
                     item.type = L"[built-in]";
-                    item.detail = L"Comando nativo rápido C++";
+                    LanguageMode lang = I18n::GetResolvedLanguage();
+                    item.detail = (lang == LanguageMode::PtBR) ? L"Comando nativo rápido C++" :
+                                  ((lang == LanguageMode::EsES) ? L"Comando nativo rápido C++" : L"Fast C++ native command");
                     items.push_back(item);
                     if (items.size() >= 8) return items;
                 }
