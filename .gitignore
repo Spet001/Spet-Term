@@ -18,6 +18,7 @@ out/
 .vs/
 .vscode/
 .idea/
+AGENTS.md
 
 # Logs and temporary files
 *.log
