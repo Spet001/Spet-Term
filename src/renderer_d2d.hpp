@@ -2539,8 +2539,11 @@ public:
         float totalHeight = (curY + 20.0f) - (py + paddingY - pane.scrollOffsetY);
         pane.totalContentHeight = totalHeight;
         float visibleH = scrollClipH - 10.0f;
-        if (pane.autoScrollToBottom && totalHeight > visibleH) {
-            pane.scrollOffsetY = totalHeight - visibleH;
+        float maxScrollY = (totalHeight > visibleH) ? (totalHeight - visibleH) : 0.0f;
+        if (pane.autoScrollToBottom) {
+            pane.scrollOffsetY = maxScrollY;
+        } else {
+            pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
         }
 
         // Render Autocomplete Popup right below input line

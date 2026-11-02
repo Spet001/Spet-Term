@@ -1285,6 +1285,16 @@ public:
                 curY += 12.0f;
             }
 
+            float totalHeight = (curY + 20.0f) - (py + padding - pane.scrollOffsetY);
+            pane.totalContentHeight = totalHeight;
+            float visibleH = (inputY - 8.0f) - py;
+            float maxScrollY = (totalHeight > visibleH) ? (totalHeight - visibleH) : 0.0f;
+            if (pane.autoScrollToBottom) {
+                pane.scrollOffsetY = maxScrollY;
+            } else {
+                pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
+            }
+
             renderer.pRenderTarget->PopAxisAlignedClip();
 
             // Bottom Prompt
@@ -2127,6 +2137,20 @@ public:
                 pane.cursorPos = pane.inputLine.size();
                 Invalidate();
             }
+        } else if (vk == VK_PRIOR) {
+            pane.autoScrollToBottom = false;
+            pane.scrollOffsetY = (std::max)(0.0f, pane.scrollOffsetY - 250.0f);
+            Invalidate();
+        } else if (vk == VK_NEXT) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            float h = static_cast<float>(rc.bottom - rc.top);
+            bool isBottomDocked = (settings.promptPosition == "bottom");
+            float promptH = isBottomDocked ? 64.0f : 0.0f;
+            float visibleH = (std::max)(100.0f, h - 34.0f - promptH - 24.0f);
+            float maxScrollY = (pane.totalContentHeight > visibleH) ? (pane.totalContentHeight - visibleH) : 0.0f;
+            pane.scrollOffsetY = (std::min)(maxScrollY, pane.scrollOffsetY + 250.0f);
+            if (pane.scrollOffsetY >= maxScrollY) pane.autoScrollToBottom = true;
+            Invalidate();
         }
     }
 
@@ -3853,11 +3877,26 @@ public:
         }
 
         auto& pane = GetActivePane();
-        pane.autoScrollToBottom = false;
-        pane.scrollOffsetY -= (delta / 120.0f) * 45.0f;
-        if (pane.scrollOffsetY < 0.0f) {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        float h = static_cast<float>(rc.bottom - rc.top);
+        bool isBottomDocked = (settings.promptPosition == "bottom");
+        float promptH = isBottomDocked ? 64.0f : 0.0f;
+        float visibleH = (std::max)(100.0f, h - 34.0f - promptH - 24.0f);
+        float maxScrollY = (pane.totalContentHeight > visibleH) ? (pane.totalContentHeight - visibleH) : 0.0f;
+
+        // Comfortable line scroll step (24px per notch)
+        float scrollStep = (delta / 120.0f) * 24.0f;
+        pane.scrollOffsetY -= scrollStep;
+
+        if (pane.scrollOffsetY <= 0.0f) {
             pane.scrollOffsetY = 0.0f;
+            pane.autoScrollToBottom = false;
+        } else if (pane.scrollOffsetY >= maxScrollY) {
+            pane.scrollOffsetY = maxScrollY;
             pane.autoScrollToBottom = true;
+        } else {
+            pane.autoScrollToBottom = false;
         }
         Invalidate();
     }
