@@ -120,15 +120,6 @@ Or invoke the Clang compiler directly:
 clang++ src/main.cpp -o spetaterm.exe -std=c++20 -O2 -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -mwindows -Xlinker /subsystem:windows -Xlinker /entry:wWinMainCRTStartup -ld2d1 -ldwrite -lwindowscodecs -lole32 -luuid -luser32 -lgdi32 -lshell32 -lshlwapi -lpsapi -ldwmapi -lcomdlg32 -ladvapi32 -ld3d11 -ldxgi -ldcomp -lpdh -lmfplat -lmfreadwrite -lmfuuid
 ```
 
-### Running Test Suite
-
-Spet@term includes a regression test suite covering the virtual screen buffer, ConPTY sequence parser, Git engine, wallpaper decoder, theme manager, and anti-slop style invariants:
-
-```powershell
-clang++ tests/test_suite.cpp -o tests/test_suite.exe -std=c++20 -O2 -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -ld2d1 -ldwrite -lwindowscodecs -lole32 -luuid -luser32 -lgdi32 -lshell32 -lshlwapi -lpsapi -ldwmapi -lcomdlg32 -ladvapi32 -ld3d11 -ldxgi -ldcomp -lpdh -lmfplat -lmfreadwrite -lmfuuid
-.\tests\test_suite.exe
-```
-
 ## Configuration
 
 Settings are stored in `%APPDATA%\Spetaterm\settings.json`. The configuration file is generated automatically on first startup:
@@ -150,8 +141,7 @@ Settings are stored in `%APPDATA%\Spetaterm\settings.json`. The configuration fi
 
 1. **No External Dependencies:** Keep the application standalone. Do not introduce runtime dependencies on third-party DLLs.
 2. **Resource Hygiene:** Avoid dynamic allocations in per-keystroke rendering loops and audio/video decoding paths.
-3. **Documentation and Style Standards:** Zero emojis and zero em-dashes across source files, comments, and documentation. All code comments and documentation must remain concise, accurate, and free of filler text.
 
 ## License
 
-Proprietary / Experimental research project. All rights reserved.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
