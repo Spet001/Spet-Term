@@ -467,6 +467,7 @@ public:
             if (RendererD2D::PtInD2D1Rect(renderer.settingsBlocksModeBtnRect, pt)) return true;
             for (const auto& b : renderer.settingsThemeBtns) if (RendererD2D::PtInD2D1Rect(b.first, pt)) return true;
             for (const auto& b : renderer.settingsPromptPositionBtns) if (RendererD2D::PtInD2D1Rect(b.first, pt)) return true;
+            for (const auto& b : renderer.settingsStreamStartBtns) if (RendererD2D::PtInD2D1Rect(b.first, pt)) return true;
             D2D1_RECT_F warmthHit = renderer.settingsWarmthSliderTrackRect;
             warmthHit.top -= 10.0f; warmthHit.bottom += 10.0f;
             if (RendererD2D::PtInD2D1Rect(warmthHit, pt)) return true;
@@ -1270,7 +1271,7 @@ public:
                 pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
             }
 
-            float curY = (measuredH <= visibleH) ? ((inputY - 8.0f) - measuredH) : (py + padding - pane.scrollOffsetY);
+            float curY = (settings.streamStart == "bottom" && measuredH <= visibleH) ? ((inputY - 8.0f) - measuredH) : (py + padding - pane.scrollOffsetY);
 
             D2D1_RECT_F blocksClip = D2D1::RectF(px, py + 2.0f, px + pw, inputY - 8.0f);
             renderer.pRenderTarget->PushAxisAlignedClip(blocksClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -2781,6 +2782,15 @@ public:
             for (const auto& pb : renderer.settingsPromptPositionBtns) {
                 if (RendererD2D::PtInD2D1Rect(pb.first, pt)) {
                     settings.promptPosition = pb.second;
+                    settings.SaveToFile();
+                    Invalidate();
+                    return;
+                }
+            }
+            // Stream Start buttons
+            for (const auto& sb : renderer.settingsStreamStartBtns) {
+                if (RendererD2D::PtInD2D1Rect(sb.first, pt)) {
+                    settings.streamStart = sb.second;
                     settings.SaveToFile();
                     Invalidate();
                     return;

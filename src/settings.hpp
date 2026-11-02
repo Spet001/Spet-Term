@@ -24,6 +24,7 @@ struct AppSettings {
     std::string language = "auto"; // "auto", "pt-BR", "en-US", "es-ES"
     float warmthLevel = 0.0f; // 0.0f to 1.0f (eye-care blue light filter)
     std::string promptPosition = "bottom"; // "bottom" or "top"
+    std::string streamStart = "top"; // "top" = start at top of window, "bottom" = docked above prompt
     bool statusBarVisible = true;
     bool systemCursor = true; // true = native Windows cursor, false = custom Direct2D cursor (experimental)
     bool warnMultiLinePaste = true; // true = security warning on multi-line batch paste
@@ -110,6 +111,7 @@ struct AppSettings {
         ss << L"  \"language\": \"" << Utf8ToWide(language) << L"\",\n";
         ss << L"  \"warmthLevel\": " << warmthLevel << L",\n";
         ss << L"  \"promptPosition\": \"" << Utf8ToWide(promptPosition) << L"\",\n";
+        ss << L"  \"streamStart\": \"" << Utf8ToWide(streamStart) << L"\",\n";
         ss << L"  \"systemCursor\": " << (systemCursor ? L"true" : L"false") << L",\n";
         ss << L"  \"statusBarVisible\": " << (statusBarVisible ? L"true" : L"false") << L",\n";
         ss << L"  \"warnMultiLinePaste\": " << (warnMultiLinePaste ? L"true" : L"false") << L",\n";
@@ -243,6 +245,9 @@ struct AppSettings {
 
         std::wstring pPos = ExtractString(L"promptPosition");
         if (!pPos.empty()) promptPosition = WideToUtf8(pPos);
+
+        std::wstring sStart = ExtractString(L"streamStart");
+        if (!sStart.empty()) streamStart = WideToUtf8(sStart);
 
         statusBarVisible = ExtractBool(L"statusBarVisible", statusBarVisible);
         systemCursor = ExtractBool(L"systemCursor", systemCursor);

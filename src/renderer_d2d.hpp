@@ -240,6 +240,7 @@ public:
 
     // Settings v4 Rects
     std::vector<std::pair<D2D1_RECT_F, std::string>> settingsPromptPositionBtns;
+    std::vector<std::pair<D2D1_RECT_F, std::string>> settingsStreamStartBtns;
     std::vector<std::pair<D2D1_RECT_F, float>> settingsWarmthBtns;
 
     // Timeline History
@@ -2157,7 +2158,7 @@ public:
         }
 
         float curY = 0.0f;
-        if (isBottomDocked) {
+        if (isBottomDocked && settings.streamStart == "bottom") {
             if (measuredContentH <= visibleH) {
                 curY = streamBottom - measuredContentH;
             } else {
@@ -3765,6 +3766,28 @@ public:
         rowY += rowH;
         DrawRowDivider(rowY);
 
+        // Row 2.5: Origem do Fluxo / Output Flow Start
+        bool isPtBR = (settings.language == "pt-BR");
+        bool isEsES = (settings.language == "es-ES");
+        std::wstring startTitle = isPtBR ? L"Origem do Fluxo [Saida]" : (isEsES ? L"Origen del Flujo [Salida]" : L"Output Flow Start");
+        std::wstring startDesc = isPtBR ? L"Comecar saidas no topo da tela ou ancoradas na base" : (isEsES ? L"Iniciar salidas arriba o ancladas en la base" : L"Start outputs at top of screen or docked at bottom");
+        DrawText(startTitle, mx + 24.0f, rowY + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+        DrawText(startDesc, mx + 24.0f, rowY + 26.0f, ColorHex(0x78788C), pUIFormatSmall);
+
+        settingsStreamStartBtns.clear();
+        std::vector<SegmentOption> streamStartOpts = {
+            { L"top", isPtBR ? L"No Topo" : (isEsES ? L"Arriba" : L"Top") },
+            { L"bottom", isPtBR ? L"Na Base" : (isEsES ? L"En Base" : L"Bottom") }
+        };
+        std::vector<std::pair<D2D1_RECT_F, std::wstring>> rawStartHit;
+        DrawSegmentedControl(ctrlLeft, rowY + 10.0f, ctrlW, ctrlH, streamStartOpts, Utf8ToWide(settings.streamStart), rawStartHit, mousePos);
+        for (const auto& rsh : rawStartHit) {
+            settingsStreamStartBtns.push_back({ rsh.first, WideToUtf8(rsh.second) });
+        }
+
+        rowY += rowH;
+        DrawRowDivider(rowY);
+
         // Row 3: Filtro Eye-Care (Warmth) Continuous Slider
         DrawText(L"Filtro Eye-Care (Warmth)", mx + 24.0f, rowY + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
         DrawText(L"Slider continuo anti-luz azul calibrado", mx + 24.0f, rowY + 26.0f, ColorHex(0x78788C), pUIFormatSmall);
@@ -3953,7 +3976,7 @@ public:
         DrawRowDivider(rowY);
 
         // Sub-Row: Pausar quando nao estiver em foco
-        bool isPtBR = (settings.language == "pt-BR");
+        isPtBR = (settings.language == "pt-BR");
         DrawText(I18n::Get(StringId::Settings_WallpaperPauseUnfocused), mx + 24.0f, rowY + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
         settingsWallpaperPauseUnfocusedBtns.clear();
         std::vector<SegmentOption> pauseUnfOpts = {
