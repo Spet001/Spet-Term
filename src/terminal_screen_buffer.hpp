@@ -307,17 +307,20 @@ public:
             for (const auto& sl : scrollback) {
                 outLines.push_back(sl);
             }
-            int maxR = (std::max)(cursorRow, 0);
-            for (int r = 0; r < rows; ++r) {
+            int maxR = -1;
+            for (int r = rows - 1; r >= 0; --r) {
                 for (const auto& cell : primaryGrid[r]) {
                     if (cell.ch != L' ' || cell.bg.a > 0.01f) {
-                        if (r > maxR) maxR = r;
+                        maxR = r;
                         break;
                     }
                 }
+                if (maxR != -1) break;
             }
-            for (int r = 0; r <= maxR && r < rows; ++r) {
-                outLines.push_back(ConvertGridRowToStyledLine(primaryGrid[r]));
+            if (maxR >= 0) {
+                for (int r = 0; r <= maxR && r < rows; ++r) {
+                    outLines.push_back(ConvertGridRowToStyledLine(primaryGrid[r]));
+                }
             }
         }
     }

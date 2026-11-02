@@ -108,8 +108,9 @@ public:
                         } else if (finalChar == L'J') {
                             if (paramStr == L"2") {
                                 screenBuffer.ClearDisplay(2);
-                                isTuiMode = true;
-                                screenBuffer.ExportToLines(outLines);
+                                if (isTuiMode) {
+                                    screenBuffer.ExportToLines(outLines);
+                                }
                             } else if (paramStr == L"3") {
                                 screenBuffer.ClearDisplay(3);
                             } else if (paramStr.empty() || paramStr == L"0") {
@@ -146,8 +147,9 @@ public:
                                 try { count = (std::max)(1, std::stoi(paramStr)); } catch (...) { count = 1; }
                             }
                             screenBuffer.MoveCursor(-count, 0);
-                            isTuiMode = true;
-                            screenBuffer.ExportToLines(outLines);
+                            if (isTuiMode) {
+                                screenBuffer.ExportToLines(outLines);
+                            }
                         } else if (finalChar == L'B') {
                             int count = 1;
                             if (!paramStr.empty()) {
@@ -765,6 +767,9 @@ public:
 
                         {
                             std::lock_guard<std::mutex> lock(blockMutex);
+                            while (!pBlock->outputLines.empty() && pBlock->outputLines.back().rawText.empty()) {
+                                pBlock->outputLines.pop_back();
+                            }
                             pBlock->isRunning = false;
                             pBlock->exitCode = static_cast<int>(exitCode);
                             pBlock->executionTimeMs = durationMs;
@@ -937,6 +942,9 @@ public:
 
             {
                 std::lock_guard<std::mutex> lock(blockMutex);
+                while (!pBlock->outputLines.empty() && pBlock->outputLines.back().rawText.empty()) {
+                    pBlock->outputLines.pop_back();
+                }
                 pBlock->isRunning = false;
                 pBlock->exitCode = static_cast<int>(exitCode);
                 pBlock->executionTimeMs = durationMs;

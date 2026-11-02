@@ -3912,13 +3912,20 @@ public:
         float visibleH = (std::max)(50.0f, scrollClipH - paddingY - 4.0f);
         float maxScrollY = (pane.totalContentHeight > visibleH) ? (pane.totalContentHeight - visibleH) : 0.0f;
 
+        if (maxScrollY <= 0.0f) {
+            pane.scrollOffsetY = 0.0f;
+            pane.autoScrollToBottom = true;
+            Invalidate();
+            return;
+        }
+
         // Comfortable line scroll step (24px per notch)
         float scrollStep = (delta / 120.0f) * 24.0f;
         pane.scrollOffsetY -= scrollStep;
 
         if (pane.scrollOffsetY <= 0.0f) {
             pane.scrollOffsetY = 0.0f;
-            pane.autoScrollToBottom = (maxScrollY <= 0.0f);
+            pane.autoScrollToBottom = false;
         } else if (pane.scrollOffsetY >= maxScrollY) {
             pane.scrollOffsetY = maxScrollY;
             pane.autoScrollToBottom = true;
