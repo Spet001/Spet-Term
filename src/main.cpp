@@ -1248,14 +1248,32 @@ public:
             float inputLineH = 28.0f;
             float inputY = py + ph - inputLineH - 12.0f;
 
-            float curY = py + padding - pane.scrollOffsetY;
-
-            D2D1_RECT_F blocksClip = D2D1::RectF(px, py + 2.0f, px + pw, inputY - 8.0f);
-            renderer.pRenderTarget->PushAxisAlignedClip(blocksClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
             float blockColsW = (std::max)(100.0f, blockW - 24.0f);
             float cwBlk = (renderer.charWidth > 1.0f) ? renderer.charWidth : 8.0f;
             int maxBlkCols = (std::max)(20, static_cast<int>(blockColsW / cwBlk));
+
+            float measuredH = 0.0f;
+            for (const auto& blk : pane.blocks) {
+                int lineCount = 0;
+                for (const auto& l : blk->outputLines) {
+                    size_t len = l.rawText.size();
+                    lineCount += (len == 0 || maxBlkCols <= 0) ? 1 : static_cast<int>((len + maxBlkCols - 1) / maxBlkCols);
+                }
+                measuredH += lineCount * renderer.lineHeight + 40.0f + 12.0f;
+            }
+            pane.totalContentHeight = measuredH;
+            float visibleH = (inputY - 8.0f) - py;
+            float maxScrollY = (measuredH > visibleH) ? (measuredH - visibleH) : 0.0f;
+            if (pane.autoScrollToBottom) {
+                pane.scrollOffsetY = maxScrollY;
+            } else {
+                pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
+            }
+
+            float curY = (measuredH <= visibleH) ? ((inputY - 8.0f) - measuredH) : (py + padding - pane.scrollOffsetY);
+
+            D2D1_RECT_F blocksClip = D2D1::RectF(px, py + 2.0f, px + pw, inputY - 8.0f);
+            renderer.pRenderTarget->PushAxisAlignedClip(blocksClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
             for (auto& blk : pane.blocks) {
                 float startY = curY;
@@ -1283,16 +1301,6 @@ public:
                     curY += renderer.lineHeight;
                 }
                 curY += 12.0f;
-            }
-
-            float totalHeight = (curY + 20.0f) - (py + padding - pane.scrollOffsetY);
-            pane.totalContentHeight = totalHeight;
-            float visibleH = (inputY - 8.0f) - py;
-            float maxScrollY = (totalHeight > visibleH) ? (totalHeight - visibleH) : 0.0f;
-            if (pane.autoScrollToBottom) {
-                pane.scrollOffsetY = maxScrollY;
-            } else {
-                pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
             }
 
             renderer.pRenderTarget->PopAxisAlignedClip();
@@ -2138,16 +2146,32 @@ public:
                 Invalidate();
             }
         } else if (vk == VK_PRIOR) {
-            pane.autoScrollToBottom = false;
-            pane.scrollOffsetY = (std::max)(0.0f, pane.scrollOffsetY - 250.0f);
+            RECT rc; GetClientRect(hwnd, &rc);
+            float h = static_cast<float>(rc.bottom - rc.top);
+            bool isBottomDocked = (settings.promptPosition == "bottom");
+            float ph = h - RendererD2D::TITLEBAR_HEIGHT;
+            float promptCardH = 56.0f;
+            float scrollClipH = isBottomDocked ? (ph - promptCardH - 8.0f) : ph;
+            float paddingY = 12.0f;
+            float visibleH = (std::max)(50.0f, scrollClipH - paddingY - 4.0f);
+            float maxScrollY = (pane.totalContentHeight > visibleH) ? (pane.totalContentHeight - visibleH) : 0.0f;
+
+            if (maxScrollY > 0.0f) {
+                pane.autoScrollToBottom = false;
+                pane.scrollOffsetY = (std::max)(0.0f, pane.scrollOffsetY - 250.0f);
+            }
             Invalidate();
         } else if (vk == VK_NEXT) {
             RECT rc; GetClientRect(hwnd, &rc);
             float h = static_cast<float>(rc.bottom - rc.top);
             bool isBottomDocked = (settings.promptPosition == "bottom");
-            float promptH = isBottomDocked ? 64.0f : 0.0f;
-            float visibleH = (std::max)(100.0f, h - 34.0f - promptH - 24.0f);
+            float ph = h - RendererD2D::TITLEBAR_HEIGHT;
+            float promptCardH = 56.0f;
+            float scrollClipH = isBottomDocked ? (ph - promptCardH - 8.0f) : ph;
+            float paddingY = 12.0f;
+            float visibleH = (std::max)(50.0f, scrollClipH - paddingY - 4.0f);
             float maxScrollY = (pane.totalContentHeight > visibleH) ? (pane.totalContentHeight - visibleH) : 0.0f;
+
             pane.scrollOffsetY = (std::min)(maxScrollY, pane.scrollOffsetY + 250.0f);
             if (pane.scrollOffsetY >= maxScrollY) pane.autoScrollToBottom = true;
             Invalidate();
@@ -3881,8 +3905,11 @@ public:
         GetClientRect(hwnd, &rc);
         float h = static_cast<float>(rc.bottom - rc.top);
         bool isBottomDocked = (settings.promptPosition == "bottom");
-        float promptH = isBottomDocked ? 64.0f : 0.0f;
-        float visibleH = (std::max)(100.0f, h - 34.0f - promptH - 24.0f);
+        float ph = h - RendererD2D::TITLEBAR_HEIGHT;
+        float promptCardH = 56.0f;
+        float scrollClipH = isBottomDocked ? (ph - promptCardH - 8.0f) : ph;
+        float paddingY = 12.0f;
+        float visibleH = (std::max)(50.0f, scrollClipH - paddingY - 4.0f);
         float maxScrollY = (pane.totalContentHeight > visibleH) ? (pane.totalContentHeight - visibleH) : 0.0f;
 
         // Comfortable line scroll step (24px per notch)
@@ -3891,7 +3918,7 @@ public:
 
         if (pane.scrollOffsetY <= 0.0f) {
             pane.scrollOffsetY = 0.0f;
-            pane.autoScrollToBottom = false;
+            pane.autoScrollToBottom = (maxScrollY <= 0.0f);
         } else if (pane.scrollOffsetY >= maxScrollY) {
             pane.scrollOffsetY = maxScrollY;
             pane.autoScrollToBottom = true;

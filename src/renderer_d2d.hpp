@@ -2091,7 +2091,81 @@ public:
         D2D1_RECT_F streamClip = D2D1::RectF(px, py, px + pw, py + scrollClipH);
         pRenderTarget->PushAxisAlignedClip(streamClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-        float curY = py + paddingY - pane.scrollOffsetY;
+        // Pre-calculate content height and layout geometry before drawing
+        float availStreamW = (std::max)(100.0f, streamW - 20.0f);
+        float cw = (charWidth > 1.0f) ? charWidth : 8.0f;
+        int maxStreamCols = (std::max)(20, static_cast<int>(availStreamW / cw));
+
+        float measuredContentH = 0.0f;
+        for (const auto& blkPtr : pane.blocks) {
+            if (!blkPtr) continue;
+            const auto& blk = *blkPtr;
+            float blockH = 26.0f + 4.0f;
+            if (blk.isCollapsed) {
+                blockH += lineHeight;
+            } else {
+                for (const auto& rawLine : blk.outputLines) {
+                    blockH += CountWrappedLines(rawLine, maxStreamCols) * lineHeight;
+                }
+                if (blk.inlineImage) {
+                    float maxW = (std::min)(streamW - 40.0f, 650.0f);
+                    float aspect = (blk.imageSize.height > 0) ? (blk.imageSize.width / blk.imageSize.height) : 1.0f;
+                    float imgW = maxW;
+                    float imgH = imgW / aspect;
+                    if (imgH > 400.0f) { imgH = 400.0f; imgW = imgH * aspect; }
+                    blockH += imgH + 12.0f;
+                }
+                if (blk.diagnosis.hasError) {
+                    blockH += 4.0f + 28.0f + 8.0f;
+                }
+            }
+            blockH += 8.0f;
+            measuredContentH += blockH;
+        }
+
+        if (pane.activeRunningBlock) {
+            float runH = lineHeight;
+            std::lock_guard<std::mutex> lock(blockMutex);
+            const auto& srcLines = pane.activeRunningBlock->outputLines;
+            size_t count = srcLines.size();
+            size_t maxSnap = pane.activeRunningBlock->isAltBuffer ? 50 : 150;
+            size_t startI = (count > maxSnap) ? (count - maxSnap) : 0;
+            if (pane.activeRunningBlock->isAltBuffer) {
+                runH += (count - startI) * lineHeight;
+            } else {
+                for (size_t i = startI; i < count; ++i) {
+                    runH += CountWrappedLines(srcLines[i], maxStreamCols) * lineHeight;
+                }
+            }
+            if (!activeCurrentLine.rawText.empty()) {
+                runH += CountWrappedLines(activeCurrentLine, maxStreamCols) * lineHeight;
+            }
+            runH += 8.0f;
+            measuredContentH += runH;
+        }
+
+        pane.totalContentHeight = measuredContentH;
+        float streamTop = py + paddingY;
+        float streamBottom = py + scrollClipH - 4.0f;
+        float visibleH = (std::max)(50.0f, streamBottom - streamTop);
+        float maxScrollY = (measuredContentH > visibleH) ? (measuredContentH - visibleH) : 0.0f;
+
+        if (pane.autoScrollToBottom) {
+            pane.scrollOffsetY = maxScrollY;
+        } else {
+            pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
+        }
+
+        float curY = 0.0f;
+        if (isBottomDocked) {
+            if (measuredContentH <= visibleH) {
+                curY = streamBottom - measuredContentH;
+            } else {
+                curY = streamTop - pane.scrollOffsetY;
+            }
+        } else {
+            curY = streamTop - pane.scrollOffsetY;
+        }
 
         // Render Empty State HUD if there are no blocks and no active command running
         if (pane.blocks.empty() && !pane.activeRunningBlock) {
@@ -2535,11 +2609,7 @@ public:
             }
         }
 
-        // Calculate total content height for scrolling
-        float totalHeight = (curY + 20.0f) - (py + paddingY - pane.scrollOffsetY);
-        pane.totalContentHeight = totalHeight;
-        float visibleH = scrollClipH - 10.0f;
-        float maxScrollY = (totalHeight > visibleH) ? (totalHeight - visibleH) : 0.0f;
+        // Keep scroll offset clamped within valid bounds
         if (pane.autoScrollToBottom) {
             pane.scrollOffsetY = maxScrollY;
         } else {

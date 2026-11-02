@@ -643,4 +643,10 @@ inline std::vector<StyledLine> WrapStyledLine(const StyledLine& line, int maxCol
     return result;
 }
 
+inline int CountWrappedLines(const StyledLine& line, int maxCols) {
+    if (maxCols <= 10) maxCols = 10;
+    if (static_cast<int>(line.rawText.size()) <= maxCols) return 1;
+    return static_cast<int>(WrapStyledLine(line, maxCols).size());
+}
+
 } // namespace speta
