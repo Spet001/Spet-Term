@@ -2106,9 +2106,41 @@ public:
                 Invalidate();
             }
         } else if (vk == VK_LEFT) {
-            if (pane.cursorPos > 0) pane.cursorPos--;
+            if (ctrl) {
+                if (pane.cursorPos > 0) {
+                    size_t p = pane.cursorPos;
+                    while (p > 0 && iswspace(pane.inputLine[p - 1])) p--;
+                    while (p > 0 && !iswspace(pane.inputLine[p - 1])) p--;
+                    pane.cursorPos = p;
+                }
+            } else {
+                if (pane.cursorPos > 0) pane.cursorPos--;
+            }
             Invalidate();
-        } else if (vk == VK_RIGHT || vk == VK_END) {
+        } else if (vk == VK_RIGHT) {
+            if (ctrl) {
+                size_t len = pane.inputLine.size();
+                size_t p = pane.cursorPos;
+                while (p < len && !iswspace(pane.inputLine[p])) p++;
+                while (p < len && iswspace(pane.inputLine[p])) p++;
+                pane.cursorPos = p;
+            } else {
+                if (pane.cursorPos == pane.inputLine.size()) {
+                    std::wstring ghostSuffix = SyntaxAndAutocomplete::ComputeGhostSuggestion(pane.inputLine, pane.commandHistory, pane.cwd);
+                    if (!ghostSuffix.empty()) {
+                        pane.inputLine += ghostSuffix;
+                        pane.cursorPos = pane.inputLine.size();
+                        Invalidate();
+                        return;
+                    }
+                }
+                if (pane.cursorPos < pane.inputLine.size()) pane.cursorPos++;
+            }
+            Invalidate();
+        } else if (vk == VK_HOME) {
+            pane.cursorPos = 0;
+            Invalidate();
+        } else if (vk == VK_END) {
             if (pane.cursorPos == pane.inputLine.size()) {
                 std::wstring ghostSuffix = SyntaxAndAutocomplete::ComputeGhostSuggestion(pane.inputLine, pane.commandHistory, pane.cwd);
                 if (!ghostSuffix.empty()) {
@@ -2118,13 +2150,21 @@ public:
                     return;
                 }
             }
-            if (vk == VK_RIGHT) {
-                if (pane.cursorPos < pane.inputLine.size()) pane.cursorPos++;
-            } else {
-                pane.cursorPos = pane.inputLine.size();
-            }
+            pane.cursorPos = pane.inputLine.size();
             Invalidate();
         } else if (vk == VK_UP) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            float w = static_cast<float>(rc.right - rc.left);
+            float bodyX = workspaceSidebarOpen ? 220.0f : 34.0f;
+            float streamW = (w - bodyX) - 36.0f;
+            float cw = (renderer.charWidth > 1.0f) ? renderer.charWidth : 8.0f;
+            float availW = (std::max)(80.0f, streamW - 32.0f);
+            int maxCols = (std::max)(15, static_cast<int>(availW / cw));
+            if (pane.cursorPos >= static_cast<size_t>(maxCols)) {
+                pane.cursorPos -= maxCols;
+                Invalidate();
+                return;
+            }
             if (!pane.commandHistory.empty()) {
                 if (pane.historyIndex == -1) {
                     pane.historyIndex = static_cast<int>(pane.commandHistory.size()) - 1;
@@ -2136,6 +2176,18 @@ public:
                 Invalidate();
             }
         } else if (vk == VK_DOWN) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            float w = static_cast<float>(rc.right - rc.left);
+            float bodyX = workspaceSidebarOpen ? 220.0f : 34.0f;
+            float streamW = (w - bodyX) - 36.0f;
+            float cw = (renderer.charWidth > 1.0f) ? renderer.charWidth : 8.0f;
+            float availW = (std::max)(80.0f, streamW - 32.0f);
+            int maxCols = (std::max)(15, static_cast<int>(availW / cw));
+            if (pane.cursorPos + maxCols < pane.inputLine.size()) {
+                pane.cursorPos += maxCols;
+                Invalidate();
+                return;
+            }
             if (!pane.commandHistory.empty() && pane.historyIndex != -1) {
                 if (pane.historyIndex + 1 < static_cast<int>(pane.commandHistory.size())) {
                     pane.historyIndex++;

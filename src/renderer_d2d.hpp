@@ -2079,6 +2079,7 @@ public:
     ) {
         outTotalMatches = 0;
         breadcrumbSegments.clear();
+        std::wstring hdrCommandTooltip;
 
         float paddingX = 18.0f;
         float paddingY = 12.0f;
@@ -2086,7 +2087,31 @@ public:
         float streamW = pw - paddingX * 2.0f;
 
         bool isBottomDocked = (settings.promptPosition == "bottom");
-        float promptCardH = 56.0f;
+        float cw = (charWidth > 1.0f) ? charWidth : 8.0f;
+        std::wstring promptSymbol = L"> ";
+        float symbolW = MeasureStringWidth(promptSymbol, pTermFormatBold);
+        float availInputW = (std::max)(80.0f, streamW - symbolW - 14.0f);
+        int maxInputCols = (std::max)(15, static_cast<int>(availInputW / cw));
+
+        StyledLine rawPromptLine;
+        rawPromptLine.rawText = pane.inputLine;
+        if (pane.syntaxAnalysis.tokens.empty()) {
+            if (!pane.inputLine.empty()) {
+                rawPromptLine.spans.push_back({ pane.inputLine, theme.textPrimary, false });
+            }
+        } else {
+            for (const auto& tok : pane.syntaxAnalysis.tokens) {
+                rawPromptLine.spans.push_back({ tok.text, tok.color, false });
+            }
+        }
+        std::vector<StyledLine> displayInputLines = WrapStyledLine(rawPromptLine, maxInputCols);
+        if (displayInputLines.empty()) {
+            StyledLine emptySl;
+            emptySl.rawText = L"";
+            displayInputLines.push_back(emptySl);
+        }
+        int inputLinesCount = (std::clamp)(static_cast<int>(displayInputLines.size()), 1, 6);
+        float promptCardH = 56.0f + (inputLinesCount - 1) * lineHeight;
         float scrollClipH = isBottomDocked ? (ph - promptCardH - 8.0f) : ph;
 
         D2D1_RECT_F streamClip = D2D1::RectF(px, py, px + pw, py + scrollClipH);
@@ -2094,7 +2119,6 @@ public:
 
         // Pre-calculate content height and layout geometry before drawing
         float availStreamW = (std::max)(100.0f, streamW - 20.0f);
-        float cw = (charWidth > 1.0f) ? charWidth : 8.0f;
         int maxStreamCols = (std::max)(20, static_cast<int>(availStreamW / cw));
 
         float measuredContentH = 0.0f;
@@ -2196,6 +2220,9 @@ public:
 
             // Exit Code Badge: EXIT 0 or EXIT 1
             float rightCur = streamX + streamW - 6.0f;
+            if (isHdrHover && blk.commandText != safeHdrCmd && mousePos.x < rightCur) {
+                hdrCommandTooltip = blk.commandText;
+            }
             std::wstring exitBadge = (blk.exitCode == 0) ? L"EXIT 0" : (L"EXIT " + std::to_wstring(blk.exitCode));
             float exitW = MeasureStringWidth(exitBadge, pUIFormatSmall);
             D2D1_COLOR_F exitCol = (blk.exitCode == 0) ? ColorHex(0x22C55E) : ColorHex(0xEF4444);
@@ -2560,54 +2587,61 @@ public:
             liveProcessKillBtnRect = D2D1::RectF(0, 0, 0, 0);
         }
 
-        // Prompt Line 2: Chevron > + Input Tokens + Ghost Autocomplete + Cursor
+        // Prompt Line 2+: Chevron > + Multi-line Wrapped Input Tokens + Ghost + Cursor
         float line2Y = line1Y + 24.0f;
         bool hasLastExitError = (!pane.blocks.empty() && pane.blocks.back()->exitCode != 0);
         D2D1_COLOR_F symbolCol = hasLastExitError ? ColorHex(0xEF4444) : ColorHex(0x2AC3DE);
-
-        std::wstring promptSymbol = L"> ";
-        DrawText(promptSymbol, streamX, line2Y, symbolCol, pTermFormatBold, theme.phosphorBloom);
-        float symbolW = MeasureStringWidth(promptSymbol, pTermFormatBold);
         float inputX = streamX + symbolW;
 
-        if (pane.syntaxAnalysis.tokens.empty() && !pane.inputLine.empty()) {
-            DrawText(pane.inputLine, inputX, line2Y, theme.textPrimary, pTermFormat, theme.phosphorBloom);
-        } else {
-            float tokX = inputX;
-            for (const auto& tok : pane.syntaxAnalysis.tokens) {
-                DrawText(tok.text, tokX, line2Y, tok.color, pTermFormat, theme.phosphorBloom);
-                float tokW = MeasureStringWidth(tok.text, pTermFormat);
-                if (tok.isUnderlined) {
-                    pSolidBrush->SetColor(theme.syntaxInvalidCommand);
-                    pRenderTarget->DrawLine(
-                        D2D1::Point2F(tokX, line2Y + lineHeight - 2.0f),
-                        D2D1::Point2F(tokX + tokW, line2Y + lineHeight - 2.0f),
-                        pSolidBrush, 1.5f
-                    );
-                }
-                tokX += tokW;
+        float curLineY = line2Y;
+        for (size_t li = 0; li < displayInputLines.size(); ++li) {
+            const auto& dl = displayInputLines[li];
+            if (li == 0) {
+                DrawText(promptSymbol, streamX, curLineY, symbolCol, pTermFormatBold, theme.phosphorBloom);
+            } else {
+                DrawText(L"\x2219 ", streamX, curLineY, ColorHex(0x565668), pTermFormatBold);
+            }
+            float curTokX = inputX;
+            for (const auto& sp : dl.spans) {
+                DrawText(sp.text, curTokX, curLineY, sp.fg, pTermFormat, theme.phosphorBloom);
+                curTokX += MeasureStringWidth(sp.text, pTermFormat);
+            }
+            curLineY += lineHeight;
+        }
+
+        // Inline Ghost Autocomplete (when input fits on single line)
+        if (displayInputLines.size() <= 1) {
+            std::wstring ghostSuffix = SyntaxAndAutocomplete::ComputeGhostSuggestion(pane.inputLine, pane.commandHistory, pane.cwd);
+            if (!ghostSuffix.empty()) {
+                float typedW = MeasureStringWidth(pane.inputLine, pTermFormat);
+                DrawText(ghostSuffix, inputX + typedW, line2Y, ColorHex(0x565668), pTermFormat);
             }
         }
 
-        // Inline Ghost Autocomplete
-        std::wstring ghostSuffix = SyntaxAndAutocomplete::ComputeGhostSuggestion(pane.inputLine, pane.commandHistory, pane.cwd);
-        if (!ghostSuffix.empty()) {
-            float typedW = MeasureStringWidth(pane.inputLine, pTermFormat);
-            DrawText(ghostSuffix, inputX + typedW, line2Y, ColorHex(0x565668), pTermFormat);
+        // Multi-line mapped Cursor
+        size_t remainingCursor = (std::min)(pane.cursorPos, pane.inputLine.size());
+        float cursorX = inputX;
+        float cursorY = line2Y;
+        for (size_t li = 0; li < displayInputLines.size(); ++li) {
+            size_t lineLen = displayInputLines[li].rawText.size();
+            if (remainingCursor <= lineLen || (li + 1 == displayInputLines.size())) {
+                std::wstring beforeCursor = displayInputLines[li].rawText.substr(0, remainingCursor);
+                cursorX = inputX + MeasureStringWidth(beforeCursor, pTermFormat);
+                cursorY = line2Y + li * lineHeight;
+                break;
+            }
+            remainingCursor -= lineLen;
         }
 
-        // Cursor
-        std::wstring beforeCursor = pane.inputLine.substr(0, (std::min)(pane.cursorPos, pane.inputLine.size()));
-        float cursorX = inputX + MeasureStringWidth(beforeCursor, pTermFormat);
         if (cursorBlink) {
             pSolidBrush->SetColor(theme.accent);
             if (cursorStyle == 0) {
-                pRenderTarget->FillRectangle(D2D1::RectF(cursorX, line2Y + 2.0f, cursorX + 2.0f, line2Y + lineHeight - 2.0f), pSolidBrush);
+                pRenderTarget->FillRectangle(D2D1::RectF(cursorX, cursorY + 2.0f, cursorX + 2.0f, cursorY + lineHeight - 2.0f), pSolidBrush);
             } else if (cursorStyle == 1) {
                 pSolidBrush->SetColor(ColorRgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.45f));
-                pRenderTarget->FillRectangle(D2D1::RectF(cursorX, line2Y + 2.0f, cursorX + charWidth, line2Y + lineHeight - 2.0f), pSolidBrush);
+                pRenderTarget->FillRectangle(D2D1::RectF(cursorX, cursorY + 2.0f, cursorX + charWidth, cursorY + lineHeight - 2.0f), pSolidBrush);
             } else {
-                pRenderTarget->FillRectangle(D2D1::RectF(cursorX, line2Y + lineHeight - 3.0f, cursorX + charWidth, line2Y + lineHeight - 1.0f), pSolidBrush);
+                pRenderTarget->FillRectangle(D2D1::RectF(cursorX, cursorY + lineHeight - 3.0f, cursorX + charWidth, cursorY + lineHeight - 1.0f), pSolidBrush);
             }
         }
 
@@ -2618,18 +2652,27 @@ public:
             pane.scrollOffsetY = (std::clamp)(pane.scrollOffsetY, 0.0f, maxScrollY);
         }
 
-        // Render Autocomplete Popup right below input line
+        // Render Autocomplete Popup
         if (pane.autocompleteOpen && !pane.autocompleteSuggestions.empty()) {
+            float popupY = line2Y + displayInputLines.size() * lineHeight + 6.0f;
+            if (isBottomDocked) {
+                float popupH = (std::min)(static_cast<float>(pane.autocompleteSuggestions.size()), 6.0f) * 26.0f + 16.0f;
+                popupY = promptCardRect.top - popupH - 4.0f;
+            }
             RenderAutocompletePopup(
                 theme,
                 inputX,
-                line2Y + lineHeight + 6.0f,
+                popupY,
                 pane.autocompleteSuggestions,
                 pane.autocompleteIndex,
                 pane.previewThumb,
                 pane.previewThumbSize,
                 pw
             );
+        }
+
+        if (!hdrCommandTooltip.empty() && mousePos.x >= 0 && mousePos.y >= 0) {
+            RenderTooltip(hdrCommandTooltip, static_cast<float>(mousePos.x), static_cast<float>(mousePos.y), pw, ph);
         }
     }
 
