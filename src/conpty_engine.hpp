@@ -591,7 +591,11 @@ public:
                     hasPwsh = (SearchPathW(nullptr, L"pwsh.exe", nullptr, MAX_PATH, testPath, nullptr) > 0);
                     checkedPwsh = true;
                 }
-                bool isMultiOrWriteHost = (cmd.find(L'\n') != std::wstring::npos || cmd.find(L'\r') != std::wstring::npos || cmd.find(L"Write-Host") != std::wstring::npos);
+                bool isMultiOrWriteHost = (cmd.find(L'\n') != std::wstring::npos ||
+                                           cmd.find(L'\r') != std::wstring::npos ||
+                                           cmd.find(L"Write-Host") != std::wstring::npos ||
+                                           cmd.find(L'\"') != std::wstring::npos ||
+                                           cmd.find(L'\'') != std::wstring::npos);
                 std::wstring pwExe = hasPwsh ? L"pwsh.exe" : L"powershell.exe";
                 if (isMultiOrWriteHost) {
                     wchar_t tempDir[MAX_PATH];
