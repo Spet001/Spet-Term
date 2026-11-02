@@ -3,14 +3,14 @@
   "fontSize": 16.5,
   "fontFamily": "Consolas",
   "classicFlowMode": true,
-  "wallpaperPath": "C:\\Users\\josem\\Documents\\antigravity\\wonderful-salk\\assets\\wallpapers\\samples\\cafe.mp4",
+  "wallpaperPath": "assets\\wallpapers\\samples\\cafe.mp4",
   "wallpaperDim": 32,
   "wallpaperPauseUnfocused": false,
   "wallpaperPauseOnBattery": true,
   "customWallpapers": [
   ],
   "cursorStyle": 0,
-  "language": "pt-BR",
+  "language": "auto",
   "warmthLevel": 0,
   "promptPosition": "bottom",
   "streamStart": "top",
@@ -32,7 +32,7 @@
     {
       "name": "Processos: Top RAM",
       "command": "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5",
-      "description": "Lista os 5 processos que mais usam memória"
+      "description": "Lista os 5 processos que mais usam memoria"
     },
     {
       "name": "Rede: Portas Abertas",
@@ -47,7 +47,7 @@
     {
       "name": "Limpeza: Cache Temp",
       "command": "Remove-Item -Path \"$env:TEMP\\*\" -Recurse -Force -ErrorAction SilentlyContinue",
-      "description": "Libera espaço apagando temporários do Windows"
+      "description": "Libera espaco apagando temporarios do Windows"
     }
   ]
 }

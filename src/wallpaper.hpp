@@ -117,7 +117,7 @@ inline std::vector<WallpaperItem> DiscoverWallpapers(const std::wstring& baseDir
                 WallpaperType t = DetectWallpaperType(fd.cFileName);
                 if (t != WallpaperType::None) {
                     WallpaperItem item;
-                    item.path = dir + L"\\" + fd.cFileName;
+                    item.path = isSampleDir ? (L"assets\\wallpapers\\samples\\" + std::wstring(fd.cFileName)) : (dir + L"\\" + fd.cFileName);
                     item.type = t;
                     item.displayName = isSampleDir ? GetSampleFriendlyName(fd.cFileName) : GetSampleFriendlyName(fd.cFileName);
                     result.push_back(item);

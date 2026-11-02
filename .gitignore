@@ -25,3 +25,6 @@ tests/
 *.log
 *.tmp
 *.bak
+
+# User settings and machine-specific configurations
+settings.json
