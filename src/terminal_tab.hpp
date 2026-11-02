@@ -18,6 +18,7 @@ struct TerminalPane {
     size_t cursorPos = 0;
     float scrollOffsetY = 0.0f;
     float totalContentHeight = 0.0f;
+    float maxScrollY = 0.0f;
     bool autoScrollToBottom = true;
     std::vector<std::wstring> commandHistory;
     int historyIndex = -1;

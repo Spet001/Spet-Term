@@ -10,9 +10,10 @@
   "customWallpapers": [
   ],
   "cursorStyle": 0,
-  "language": "auto",
+  "language": "pt-BR",
   "warmthLevel": 0,
   "promptPosition": "bottom",
+  "streamStart": "top",
   "systemCursor": false,
   "statusBarVisible": true,
   "warnMultiLinePaste": true,

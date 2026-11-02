@@ -2150,6 +2150,7 @@ public:
         float streamBottom = py + scrollClipH - 4.0f;
         float visibleH = (std::max)(50.0f, streamBottom - streamTop);
         float maxScrollY = (measuredContentH > visibleH) ? (measuredContentH - visibleH) : 0.0f;
+        pane.maxScrollY = maxScrollY;
 
         if (pane.autoScrollToBottom) {
             pane.scrollOffsetY = maxScrollY;
@@ -2644,17 +2645,22 @@ public:
         float barW = 5.0f;
         float barX = px + pw - 7.0f;
 
+        // Subtle background track
+        pSolidBrush->SetColor(ColorRgba(1.0f, 1.0f, 1.0f, 0.04f));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(barX, py + 2.0f, barX + barW, py + ph - 2.0f), 2.5f, 2.5f), pSolidBrush);
+
         // Thumb
         float thumbH = (std::max)(24.0f, (ph / totalContentHeight) * ph);
         float thumbY = py + (scrollOffsetY / totalContentHeight) * ph;
         if (thumbY + thumbH > py + ph) thumbY = py + ph - thumbH;
 
         D2D1_RECT_F thumbRect = D2D1::RectF(barX, thumbY, barX + barW, thumbY + thumbH);
-        pSolidBrush->SetColor(ColorRgba(0.94f, 0.94f, 1.0f, 0.20f));
+        pSolidBrush->SetColor(ColorRgba(0.94f, 0.94f, 1.0f, 0.35f));
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(thumbRect, 2.5f, 2.5f), pSolidBrush);
 
-        // Mini-Map Markers: Cyan block starts, Red errors, Yellow warnings
+        // Mini-Map Markers: Red errors, Yellow warnings (no normal block markers)
         for (const auto& blk : blocks) {
+            if (!blk) continue;
             float blockContentY = (blk->blockRect.top > 0.0f) ? (blk->blockRect.top - (py + 16.0f) + scrollOffsetY) : 0.0f;
             float markerRatio = (std::clamp)(blockContentY / (totalContentHeight > 0.0f ? totalContentHeight : 1.0f), 0.0f, 1.0f);
             float markerY = py + markerRatio * ph;
@@ -2666,9 +2672,6 @@ public:
                 } else if (blk->diagnosis.hasError) {
                     pSolidBrush->SetColor(ColorHex(0xFFD480));
                     pRenderTarget->FillRectangle(D2D1::RectF(barX - 0.5f, markerY, barX + barW, markerY + 2.0f), pSolidBrush);
-                } else {
-                    pSolidBrush->SetColor(ColorHex(0x00FFBF));
-                    pRenderTarget->FillRectangle(D2D1::RectF(barX, markerY, barX + barW, markerY + 2.0f), pSolidBrush);
                 }
             }
         }
