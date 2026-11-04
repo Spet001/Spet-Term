@@ -524,7 +524,7 @@ private:
 
         std::vector<QueuedFrame> buffer;
         std::vector<std::vector<BYTE>> freePool;
-        const size_t REORDER_DEPTH = 6;
+        const size_t REORDER_DEPTH = 2;
         size_t expectedSize = static_cast<size_t>(m_videoWidth) * m_videoHeight * 4;
         bool endOfStream = false;
 
@@ -631,7 +631,7 @@ private:
             }
 
             // Recycle buffer into freePool to prevent heap allocations
-            freePool.push_back(std::move(popped.pixels));
+            if (freePool.size() < 2) { freePool.push_back(std::move(popped.pixels)); }
 
             auto endTime = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();

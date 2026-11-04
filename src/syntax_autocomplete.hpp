@@ -200,9 +200,9 @@ public:
             do {
                 if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
                 if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                    cwdDirs.push_back(fd.cFileName);
+                    if (cwdDirs.size() < 100) cwdDirs.push_back(fd.cFileName);
                 } else {
-                    cwdFiles.push_back(fd.cFileName);
+                    if (cwdFiles.size() < 100) cwdFiles.push_back(fd.cFileName);
                 }
             } while (FindNextFileW(hFind, &fd));
             FindClose(hFind);

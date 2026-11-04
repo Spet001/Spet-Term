@@ -426,30 +426,7 @@ private:
             return HasAnyWorktreeFiles(repoRoot, ignoreMatcher);
         }
 
-        // Parse Git Index (DIRC format) to check modified and deleted files
-        std::unordered_map<std::wstring, uint32_t> indexFiles;
-        if (ParseIndexFile(indexPath, indexFiles)) {
-            size_t checked = 0;
-            const size_t maxCheck = 200;
-            for (const auto& kv : indexFiles) {
-                if (++checked > maxCheck) break;
-                std::wstring fullPath = repoRoot + L"\\" + kv.first;
-                WIN32_FILE_ATTRIBUTE_DATA fad;
-                if (!GetFileAttributesExW(fullPath.c_str(), GetFileExInfoStandard, &fad)) {
-                    return true;
-                }
-                if (fad.nFileSizeLow != kv.second) {
-                    return true;
-                }
-            }
-            int visitedCount = 0;
-            if (HasUntrackedFiles(repoRoot, L"", indexFiles, ignoreMatcher, 0, visitedCount)) {
-                return true;
-            }
-            return false;
-        }
-
-        // Fallback to timestamp comparison
+        // Fast zero-heap-allocation timestamp check
         ULARGE_INTEGER indexTime;
         indexTime.LowPart = indexData.ftLastWriteTime.dwLowDateTime;
         indexTime.HighPart = indexData.ftLastWriteTime.dwHighDateTime;

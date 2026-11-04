@@ -198,6 +198,13 @@ public:
 
         PROCESS_MEMORY_COUNTERS_EX pmc;
         if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+            static ULONGLONG lastTrimTick = 0;
+            ULONGLONG currentTick = GetTickCount64();
+            if (currentTick - lastTrimTick > 5000) {
+                SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
+                lastTrimTick = currentTick;
+                GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+            }
             td.procRamMb = pmc.WorkingSetSize / (1024 * 1024);
             ramUsageMb = td.procRamMb;
         }
@@ -4532,7 +4539,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     HWND hwnd = CreateWindowExW(
         WS_EX_APPWINDOW,
         wc.lpszClassName,
-        L"Spet@term: Ultra-Fast Native Terminal v2.0",
+        L"Spet@Term V0.05",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         1150, 720,
