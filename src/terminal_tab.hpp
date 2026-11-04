@@ -4,6 +4,7 @@
 #include "themes.hpp"
 #include "syntax_autocomplete.hpp"
 #include "git_engine.hpp"
+#include "workfolder.hpp"
 
 namespace speta {
 
@@ -35,6 +36,13 @@ struct TerminalPane {
     int hoveredCommandIndex = -1;
     D2D1_RECT_F hoveredCopyBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F hoveredRerunBtnRect{ 0, 0, 0, 0 };
+
+    // Git and Project Task telemetry cache
+    GitStatusInfo cachedGitInfo;
+    std::vector<ProjectTask> cachedTasks;
+    std::wstring lastInspectedCwd;
+    ULONGLONG lastGitCheckTick = 0;
+    bool gitInfoDirty = true;
 
     TerminalPane() {
         wchar_t buf[MAX_PATH] = {};

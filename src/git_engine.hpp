@@ -107,10 +107,14 @@ public:
     }
 
     bool IsIgnored(const std::wstring& relPath, const std::wstring& fileName, bool isDir) const {
-        if (_wcsicmp(fileName.c_str(), L".git") == 0) return true;
-        if (_wcsicmp(fileName.c_str(), L".vs") == 0) return true;
-        if (_wcsicmp(fileName.c_str(), L".idea") == 0) return true;
-        if (_wcsicmp(fileName.c_str(), L"node_modules") == 0) return true;
+        static const wchar_t* commonIgnoreDirs[] = {
+            L".git", L".vs", L".idea", L".vscode", L"node_modules",
+            L".next", L".nuxt", L".turbo", L".cache", L"dist",
+            L"build", L"out", L"target", L"bin", L"obj", L"coverage", L"vendor"
+        };
+        for (const auto* ign : commonIgnoreDirs) {
+            if (_wcsicmp(fileName.c_str(), ign) == 0) return true;
+        }
 
         bool ignored = false;
         for (const auto& r : rules) {
@@ -425,7 +429,10 @@ private:
         // Parse Git Index (DIRC format) to check modified and deleted files
         std::unordered_map<std::wstring, uint32_t> indexFiles;
         if (ParseIndexFile(indexPath, indexFiles)) {
+            size_t checked = 0;
+            const size_t maxCheck = 200;
             for (const auto& kv : indexFiles) {
+                if (++checked > maxCheck) break;
                 std::wstring fullPath = repoRoot + L"\\" + kv.first;
                 WIN32_FILE_ATTRIBUTE_DATA fad;
                 if (!GetFileAttributesExW(fullPath.c_str(), GetFileExInfoStandard, &fad)) {
@@ -435,7 +442,8 @@ private:
                     return true;
                 }
             }
-            if (HasUntrackedFiles(repoRoot, L"", indexFiles, ignoreMatcher, 0)) {
+            int visitedCount = 0;
+            if (HasUntrackedFiles(repoRoot, L"", indexFiles, ignoreMatcher, 0, visitedCount)) {
                 return true;
             }
             return false;
@@ -445,7 +453,8 @@ private:
         ULARGE_INTEGER indexTime;
         indexTime.LowPart = indexData.ftLastWriteTime.dwLowDateTime;
         indexTime.HighPart = indexData.ftLastWriteTime.dwHighDateTime;
-        return ScanDirForNewer(repoRoot, L"", indexTime, ignoreMatcher, 0);
+        int visitedCount = 0;
+        return ScanDirForNewer(repoRoot, L"", indexTime, ignoreMatcher, 0, visitedCount);
     }
 
     static bool HasAnyWorktreeFiles(const std::wstring& dir, const GitIgnoreMatcher& ignoreMatcher) {
@@ -525,9 +534,11 @@ private:
         const std::wstring& relDir,
         const std::unordered_map<std::wstring, uint32_t>& indexFiles,
         const GitIgnoreMatcher& ignoreMatcher,
-        int depth)
+        int depth,
+        int& visitedCount)
     {
-        if (depth > 6) return false;
+        if (depth > 4) return false;
+        if (++visitedCount > 150) return false;
         std::wstring currentDir = relDir.empty() ? repoRoot : (repoRoot + L"\\" + relDir);
         std::wstring pattern = currentDir + L"\\*";
         WIN32_FIND_DATAW fd;
@@ -551,7 +562,7 @@ private:
                     break;
                 }
             } else {
-                if (HasUntrackedFiles(repoRoot, relPath, indexFiles, ignoreMatcher, depth + 1)) {
+                if (HasUntrackedFiles(repoRoot, relPath, indexFiles, ignoreMatcher, depth + 1, visitedCount)) {
                     untracked = true;
                     break;
                 }
@@ -567,9 +578,11 @@ private:
         const std::wstring& relDir,
         const ULARGE_INTEGER& indexTime,
         const GitIgnoreMatcher& ignoreMatcher,
-        int depth)
+        int depth,
+        int& visitedCount)
     {
-        if (depth > 6) return false;
+        if (depth > 4) return false;
+        if (++visitedCount > 150) return false;
 
         std::wstring currentDir = relDir.empty() ? repoRoot : (repoRoot + L"\\" + relDir);
         std::wstring pattern = currentDir + L"\\*";
@@ -598,7 +611,7 @@ private:
                     break;
                 }
             } else {
-                if (ScanDirForNewer(repoRoot, relPath, indexTime, ignoreMatcher, depth + 1)) {
+                if (ScanDirForNewer(repoRoot, relPath, indexTime, ignoreMatcher, depth + 1, visitedCount)) {
                     dirty = true;
                     break;
                 }

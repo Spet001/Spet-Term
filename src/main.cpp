@@ -94,6 +94,9 @@ public:
     ULARGE_INTEGER lastCpuUserTime = { 0 };
 
     GitStatusInfo cachedGitInfo;
+    std::mutex telemetryMutex;
+    std::thread telemetryThread;
+    std::atomic<bool> telemetryThreadRunning{ false };
     std::wstring cachedCwd;
     ULONGLONG cachedInfoTick = 0;
     TelemetryData telemetry;
@@ -104,12 +107,81 @@ public:
     ULONGLONG lastProcKernelUser = 0;
     ULONGLONG lastProcWallTick = 0;
 
+    void UpdateGitAndTasksIfDirty(TerminalPane& pane, bool force = false) {
+        ULONGLONG now = GetTickCount64();
+        bool cwdChanged = (pane.cwd != pane.lastInspectedCwd);
+        bool timeExpired = (now - pane.lastGitCheckTick > 4000);
+        if (force || pane.gitInfoDirty || cwdChanged || timeExpired) {
+            pane.cachedGitInfo = GitEngine::InspectRepository(pane.cwd);
+            pane.cachedTasks = DetectProjectTasks(pane.cwd);
+            pane.lastInspectedCwd = pane.cwd;
+            pane.lastGitCheckTick = now;
+            pane.gitInfoDirty = false;
+        }
+        detectedTasks = pane.cachedTasks;
+    }
+
     void InitPdh() {
+        if (pdhReady) return;
         if (PdhOpenQueryW(nullptr, 0, &pdhQuery) != ERROR_SUCCESS) { pdhQuery = nullptr; return; }
         PdhAddEnglishCounterW(pdhQuery, L"\\GPU Engine(*)\\Utilization Percentage", 0, &pdhGpuCounter);
         PdhAddEnglishCounterW(pdhQuery, L"\\Thermal Zone Information(*)\\Temperature", 0, &pdhTempCounter);
         PdhCollectQueryData(pdhQuery);
         pdhReady = true;
+    }
+
+    void UpdateBasicTelemetry() {
+        PROCESS_MEMORY_COUNTERS_EX pmc;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+            std::lock_guard<std::mutex> lock(telemetryMutex);
+            telemetry.procRamMb = pmc.WorkingSetSize / (1024 * 1024);
+            ramUsageMb = telemetry.procRamMb;
+        }
+
+        MEMORYSTATUSEX ms = { sizeof(ms) };
+        if (GlobalMemoryStatusEx(&ms)) {
+            std::lock_guard<std::mutex> lock(telemetryMutex);
+            telemetry.sysRamTotalGb = static_cast<double>(ms.ullTotalPhys) / (1024.0 * 1024.0 * 1024.0);
+            telemetry.sysRamUsedGb = static_cast<double>(ms.ullTotalPhys - ms.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0);
+        }
+
+        FILETIME cT, eT, pK, pU;
+        if (GetProcessTimes(GetCurrentProcess(), &cT, &eT, &pK, &pU)) {
+            ULARGE_INTEGER k, u;
+            k.LowPart = pK.dwLowDateTime; k.HighPart = pK.dwHighDateTime;
+            u.LowPart = pU.dwLowDateTime; u.HighPart = pU.dwHighDateTime;
+            lastProcKernelUser = k.QuadPart + u.QuadPart;
+            lastProcWallTick = GetTickCount64();
+        }
+
+        FILETIME idleTime, kernelTime, userTime;
+        if (GetSystemTimes(&idleTime, &kernelTime, &userTime)) {
+            lastCpuIdleTime.LowPart = idleTime.dwLowDateTime; lastCpuIdleTime.HighPart = idleTime.dwHighDateTime;
+            lastCpuKernelTime.LowPart = kernelTime.dwLowDateTime; lastCpuKernelTime.HighPart = kernelTime.dwHighDateTime;
+            lastCpuUserTime.LowPart = userTime.dwLowDateTime; lastCpuUserTime.HighPart = userTime.dwHighDateTime;
+        }
+    }
+
+    void StartTelemetryThread() {
+        if (telemetryThreadRunning) return;
+        telemetryThreadRunning = true;
+        telemetryThread = std::thread([this]() {
+            InitPdh();
+            while (telemetryThreadRunning) {
+                UpdateTelemetry();
+                for (int i = 0; i < 20 && telemetryThreadRunning; ++i) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+            }
+            ShutdownPdh();
+        });
+    }
+
+    void StopTelemetryThread() {
+        telemetryThreadRunning = false;
+        if (telemetryThread.joinable()) {
+            telemetryThread.join();
+        }
     }
 
     void ShutdownPdh() {
@@ -118,19 +190,16 @@ public:
     }
 
     void UpdateTelemetry() {
-        if (!pdhReady && !pdhQuery) InitPdh();
+        TelemetryData td;
+        {
+            std::lock_guard<std::mutex> lock(telemetryMutex);
+            td = telemetry;
+        }
 
         PROCESS_MEMORY_COUNTERS_EX pmc;
         if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
-            static ULONGLONG lastTrimTick = 0;
-            ULONGLONG currentTick = GetTickCount64();
-            if (currentTick - lastTrimTick > 4000) {
-                SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
-                lastTrimTick = currentTick;
-                GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
-            }
-            telemetry.procRamMb = pmc.WorkingSetSize / (1024 * 1024);
-            ramUsageMb = telemetry.procRamMb;
+            td.procRamMb = pmc.WorkingSetSize / (1024 * 1024);
+            ramUsageMb = td.procRamMb;
         }
 
         FILETIME cT, eT, pK, pU;
@@ -143,7 +212,7 @@ public:
             if (lastProcWallTick != 0 && nowTick > lastProcWallTick) {
                 SYSTEM_INFO si; GetSystemInfo(&si);
                 double wall100ns = static_cast<double>(nowTick - lastProcWallTick) * 10000.0 * (si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1);
-                telemetry.procCpu = (std::min)(100.0, static_cast<double>(used - lastProcKernelUser) / wall100ns * 100.0);
+                td.procCpu = (std::min)(100.0, static_cast<double>(used - lastProcKernelUser) / wall100ns * 100.0);
             }
             lastProcKernelUser = used;
             lastProcWallTick = nowTick;
@@ -151,8 +220,8 @@ public:
 
         MEMORYSTATUSEX ms = { sizeof(ms) };
         if (GlobalMemoryStatusEx(&ms)) {
-            telemetry.sysRamTotalGb = static_cast<double>(ms.ullTotalPhys) / (1024.0 * 1024.0 * 1024.0);
-            telemetry.sysRamUsedGb = static_cast<double>(ms.ullTotalPhys - ms.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0);
+            td.sysRamTotalGb = static_cast<double>(ms.ullTotalPhys) / (1024.0 * 1024.0 * 1024.0);
+            td.sysRamUsedGb = static_cast<double>(ms.ullTotalPhys - ms.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0);
         }
 
         FILETIME idleTime, kernelTime, userTime;
@@ -169,7 +238,7 @@ public:
                     cpuUsagePercent = (1.0 - (double)idleDiff / (double)total) * 100.0;
                     if (cpuUsagePercent < 0.0) cpuUsagePercent = 0.0;
                     if (cpuUsagePercent > 100.0) cpuUsagePercent = 100.0;
-                    telemetry.sysCpu = cpuUsagePercent;
+                    td.sysCpu = cpuUsagePercent;
                 }
             }
             lastCpuIdleTime = idle;
@@ -200,8 +269,8 @@ public:
                         }
                         double sysMax = 0.0;
                         for (auto& kv : sysByEngine) sysMax = (std::max)(sysMax, kv.second);
-                        telemetry.procGpu = (std::min)(100.0, procSum);
-                        telemetry.sysGpu = (std::min)(100.0, sysMax);
+                        td.procGpu = (std::min)(100.0, procSum);
+                        td.sysGpu = (std::min)(100.0, sysMax);
                     }
                 }
             }
@@ -216,14 +285,23 @@ public:
                         for (DWORD i = 0; i < count; ++i) best = (std::max)(best, items[i].FmtValue.doubleValue - 273.15);
                         // Filter out dummy 30.0 C (303.15 K) ACPI sensor reported on desktops without ACPI thermal zone
                         if (best > 0.0 && !(best >= 29.95 && best <= 30.05)) {
-                            telemetry.sysTempC = best;
-                            telemetry.sysTempValid = true;
+                            td.sysTempC = best;
+                            td.sysTempValid = true;
                         } else {
-                            telemetry.sysTempValid = false;
+                            td.sysTempValid = false;
                         }
                     }
                 }
             }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(telemetryMutex);
+            telemetry = td;
+        }
+
+        if (hwnd && settings.statusBarVisible) {
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
     }
     // Toast Notification State
@@ -981,8 +1059,8 @@ public:
         renderer.suppressEmptyState = (workfolderOpen || settingsOpen || timelineOpen || paletteOpen || helpModalOpen || multiLinePasteModalOpen || onboarding.open);
 
         auto& activeTab = GetActiveTab();
-        GitStatusInfo gitInfo = GitEngine::InspectRepository(activeTab.GetActivePane().cwd);
-        detectedTasks = DetectProjectTasks(activeTab.GetActivePane().cwd);
+        UpdateGitAndTasksIfDirty(activeTab.GetActivePane());
+        const GitStatusInfo& gitInfo = activeTab.GetActivePane().cachedGitInfo;
         bool isMax = (IsZoomed(hwnd) != 0);
 
         renderer.RenderUnifiedTitleBar(
@@ -1044,14 +1122,18 @@ public:
                 // 2 Panes
                 if (activeTab.isSplitVertical) {
                     float splitH = bodyH / 2.0f;
-                    RenderPaneBody(*activeTab.panes[0], bodyX, bodyY, paneW, splitH, isCtrlDown, gitInfo);
+                    UpdateGitAndTasksIfDirty(*activeTab.panes[0]);
+                    UpdateGitAndTasksIfDirty(*activeTab.panes[1]);
+                    RenderPaneBody(*activeTab.panes[0], bodyX, bodyY, paneW, splitH, isCtrlDown, activeTab.panes[0]->cachedGitInfo);
                     renderer.DrawSplitDivider(currentTheme, D2D1::RectF(bodyX, bodyY, bodyX + paneW, bodyY + splitH), false, activeTab.activePaneIndex == 0);
-                    RenderPaneBody(*activeTab.panes[1], bodyX, bodyY + splitH, paneW, splitH, isCtrlDown, gitInfo);
+                    RenderPaneBody(*activeTab.panes[1], bodyX, bodyY + splitH, paneW, splitH, isCtrlDown, activeTab.panes[1]->cachedGitInfo);
                 } else {
                     float splitW = paneW / 2.0f;
-                    RenderPaneBody(*activeTab.panes[0], bodyX, bodyY, splitW, bodyH, isCtrlDown, gitInfo);
+                    UpdateGitAndTasksIfDirty(*activeTab.panes[0]);
+                    UpdateGitAndTasksIfDirty(*activeTab.panes[1]);
+                    RenderPaneBody(*activeTab.panes[0], bodyX, bodyY, splitW, bodyH, isCtrlDown, activeTab.panes[0]->cachedGitInfo);
                     renderer.DrawSplitDivider(currentTheme, D2D1::RectF(bodyX, bodyY, bodyX + splitW, bodyY + bodyH), true, activeTab.activePaneIndex == 0);
-                    RenderPaneBody(*activeTab.panes[1], bodyX + splitW, bodyY, splitW, bodyH, isCtrlDown, gitInfo);
+                    RenderPaneBody(*activeTab.panes[1], bodyX + splitW, bodyY, splitW, bodyH, isCtrlDown, activeTab.panes[1]->cachedGitInfo);
                 }
             }
         }
@@ -1074,7 +1156,12 @@ public:
         }
 
         if (settings.statusBarVisible) {
-            renderer.RenderModularStatusBar(currentTheme, settings, width, height, gitInfo, telemetry, mousePos);
+            TelemetryData currentTm;
+            {
+                std::lock_guard<std::mutex> lock(telemetryMutex);
+                currentTm = telemetry;
+            }
+            renderer.RenderModularStatusBar(currentTheme, settings, width, height, gitInfo, currentTm, mousePos);
         }
 
         if (snippetsPopoverOpen) {
@@ -1308,7 +1395,7 @@ public:
             renderer.pRenderTarget->PopAxisAlignedClip();
 
             // Bottom Prompt
-            GitStatusInfo gitInfo = GitEngine::InspectRepository(pane.cwd);
+
             renderer.DrawText(L"PS " + pane.cwd + L"> " + pane.inputLine, px + 10.0f, inputY, currentTheme.promptPw, renderer.pTextFormatBold);
         }
 
@@ -1918,6 +2005,7 @@ public:
                             p->blocks.push_back(std::move(p->activeRunningBlock));
                             p->activeRunningBlock = nullptr;
                             p->autoScrollToBottom = true;
+                            p->gitInfoDirty = true;
                         }
                     }
                 }
@@ -2307,8 +2395,8 @@ public:
     }
 
     void TriggerAutocomplete(TerminalPane& pane) {
-        GitStatusInfo gitInfo = GitEngine::InspectRepository(pane.cwd);
-        pane.autocompleteSuggestions = syntaxEngine.GetSuggestions(pane.inputLine, pane.cursorPos, pane.cwd, gitInfo);
+        UpdateGitAndTasksIfDirty(pane);
+        pane.autocompleteSuggestions = syntaxEngine.GetSuggestions(pane.inputLine, pane.cursorPos, pane.cwd, pane.cachedGitInfo);
         pane.autocompleteIndex = 0;
         pane.autocompleteOpen = !pane.autocompleteSuggestions.empty();
         SafeRelease(pane.previewThumb);
@@ -4327,7 +4415,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == 1 && g_App) {
             if (IsIconic(hwnd)) return 0;
             g_App->cursorBlinkState = !g_App->cursorBlinkState;
-            g_App->UpdateTelemetry();
+
             if (g_App->edgePulseActive) {
                 DWORD elapsed = GetTickCount() - g_App->edgePulseStartTick;
                 if (elapsed >= 1800) g_App->edgePulseActive = false;
@@ -4393,6 +4481,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             p->blocks.push_back(std::move(p->activeRunningBlock));
                             p->activeRunningBlock = nullptr;
                             p->autoScrollToBottom = true;
+                            p->gitInfoDirty = true;
                         }
                         found = true;
                         break;
@@ -4405,6 +4494,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_DESTROY:
+        if (g_App) {
+            g_App->StopTelemetryThread();
+        }
         PostQuitMessage(0);
         return 0;
     }
@@ -4485,6 +4577,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // Cursor Blink Timer (500ms)
     SetTimer(hwnd, 1, 500, nullptr);
 
+    app.UpdateBasicTelemetry();
+    app.StartTelemetryThread();
+
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
     SetFocus(hwnd);
@@ -4499,7 +4594,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     UnregisterHotKey(hwnd, HOTKEY_QUAKE + 1);
     KillTimer(hwnd, 1);
     int exitCode = static_cast<int>(msg.wParam);
-    app.ShutdownPdh();
+    app.StopTelemetryThread();
     g_App = nullptr;
     appPtr.reset();
     SpriteAtlas::Instance().Shutdown();

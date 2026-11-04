@@ -47,6 +47,7 @@ public:
     std::unordered_set<std::wstring> gitSubcommands;
     std::unordered_set<std::wstring> pwCmdlets;
     std::wstring lastCwd;
+    bool lastCwdValid = false;
     std::vector<std::wstring> cwdFiles;
     std::vector<std::wstring> cwdDirs;
 
@@ -186,8 +187,9 @@ public:
     }
 
     void RefreshCwdCache(const std::wstring& cwd) {
-        if (cwd == lastCwd && !cwdFiles.empty()) return;
+        if (lastCwdValid && cwd == lastCwd) return;
         lastCwd = cwd;
+        lastCwdValid = true;
         cwdFiles.clear();
         cwdDirs.clear();
 
