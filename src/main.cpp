@@ -86,7 +86,7 @@ public:
     bool edgePulseSuccess = true;
     DWORD edgePulseStartTick = 0;
     double cpuUsagePercent = 0.0;
-    size_t ramUsageMb = 0;
+    double ramUsageMb = 0.0;
     bool isDraggingWarmth = false;
     std::vector<ProjectTask> detectedTasks;
     ULARGE_INTEGER lastCpuIdleTime = { 0 };
@@ -121,6 +121,37 @@ public:
         detectedTasks = pane.cachedTasks;
     }
 
+    struct SpetaProcessMemoryCountersEx2 {
+        DWORD cb;
+        DWORD PageFaultCount;
+        SIZE_T PeakWorkingSetSize;
+        SIZE_T WorkingSetSize;
+        SIZE_T QuotaPeakPagedPoolUsage;
+        SIZE_T QuotaPagedPoolUsage;
+        SIZE_T QuotaPeakNonPagedPoolUsage;
+        SIZE_T QuotaNonPagedPoolUsage;
+        SIZE_T PagefileUsage;
+        SIZE_T PeakPagefileUsage;
+        SIZE_T PrivateUsage;
+        SIZE_T PrivateWorkingSetSize;
+        ULONG64 SharedCommitUsage;
+    };
+
+    static double GetProcessPrivateRamMb() {
+        SpetaProcessMemoryCountersEx2 pmc = {};
+        pmc.cb = sizeof(pmc);
+        if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
+            if (pmc.PrivateWorkingSetSize > 0) {
+                return static_cast<double>(pmc.PrivateWorkingSetSize) / (1024.0 * 1024.0);
+            }
+            if (pmc.PrivateUsage > 0) {
+                return static_cast<double>(pmc.PrivateUsage) / (1024.0 * 1024.0);
+            }
+            return static_cast<double>(pmc.WorkingSetSize) / (1024.0 * 1024.0);
+        }
+        return 0.0;
+    }
+
     void InitPdh() {
         if (pdhReady) return;
         if (PdhOpenQueryW(nullptr, 0, &pdhQuery) != ERROR_SUCCESS) { pdhQuery = nullptr; return; }
@@ -131,11 +162,11 @@ public:
     }
 
     void UpdateBasicTelemetry() {
-        PROCESS_MEMORY_COUNTERS_EX pmc;
-        if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+        double ramMb = GetProcessPrivateRamMb();
+        {
             std::lock_guard<std::mutex> lock(telemetryMutex);
-            telemetry.procRamMb = pmc.WorkingSetSize / (1024 * 1024);
-            ramUsageMb = telemetry.procRamMb;
+            telemetry.procRamMb = ramMb;
+            ramUsageMb = ramMb;
         }
 
         MEMORYSTATUSEX ms = { sizeof(ms) };
@@ -196,11 +227,8 @@ public:
             td = telemetry;
         }
 
-        PROCESS_MEMORY_COUNTERS_EX pmc;
-        if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
-            td.procRamMb = pmc.WorkingSetSize / (1024 * 1024);
-            ramUsageMb = td.procRamMb;
-        }
+        td.procRamMb = GetProcessPrivateRamMb();
+        ramUsageMb = td.procRamMb;
 
         FILETIME cT, eT, pK, pU;
         if (GetProcessTimes(GetCurrentProcess(), &cT, &eT, &pK, &pU)) {

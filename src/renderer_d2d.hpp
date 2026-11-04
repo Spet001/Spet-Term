@@ -21,7 +21,7 @@ namespace speta {
 
 struct TelemetryData {
     double procCpu = 0.0;
-    size_t procRamMb = 0;
+    double procRamMb = 0.0;
     double procGpu = 0.0;
     double sysCpu = 0.0;
     double sysRamUsedGb = 0.0;
@@ -1549,7 +1549,7 @@ public:
         DrawStatusBadge(procBadgeR, L"PROC", ColorHex(0x182032), ColorHex(0x384E7A), ColorHex(0x80AAFF));
 
         wchar_t procBuf[96];
-        swprintf_s(procBuf, L"CPU %.1f%%  |  RAM %zu MB  |  GPU %.1f%%", tm.procCpu, tm.procRamMb, tm.procGpu);
+        swprintf_s(procBuf, L"CPU %.1f%%  |  RAM %.1f MB  |  GPU %.1f%%", tm.procCpu, tm.procRamMb, tm.procGpu);
         DrawText(procBuf, procBadgeR.right + 8.0f, textY, dim, pUIFormatSmall);
 
         // SYS metrics and badge
