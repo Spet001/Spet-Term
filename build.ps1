@@ -46,7 +46,11 @@ $cflags = @(
     "-lpdh",
     "-lmfplat",
     "-lmfreadwrite",
-    "-lmfuuid"
+    "-lmfuuid",
+    "-ld3dcompiler",
+    "-lbcrypt",
+    "-lrstrtmgr",
+    "-lwinmm"
 )
 
 $cmdInputs = @($src)

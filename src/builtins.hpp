@@ -76,48 +76,52 @@ public:
             AddLine(args, theme.textPrimary);
         } else if (cmd == L"mkdir") {
             if (args.empty()) {
-                AddLine(L"Uso: mkdir <nome-do-diretorio>", theme.syntaxInvalidCommand);
+                AddLine(I18n::Tr(L"Uso: mkdir <nome-do-diretorio>", L"Usage: mkdir <directory-name>", L"Uso: mkdir <nombre-del-directorio>"), theme.syntaxInvalidCommand);
                 block.exitCode = 1;
             } else {
                 std::wstring fullPath = cwd + L"\\" + args;
                 if (CreateDirectoryW(fullPath.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS) {
-                    AddLine(L"[OK] Diretório criado com sucesso: " + args, theme.syntaxValidCommand);
+                    AddLine(std::wstring(I18n::Tr(L"[OK] Diretório criado com sucesso: ", L"[OK] Directory created successfully: ", L"[OK] Directorio creado con éxito: ")) + args, theme.syntaxValidCommand);
                 } else {
-                    AddLine(L"[Erro] Falha ao criar diretório. Erro: " + std::to_wstring(GetLastError()), theme.syntaxInvalidCommand);
+                    AddLine(std::wstring(I18n::Tr(L"[Erro] Falha ao criar diretório. Erro: ", L"[Error] Failed to create directory. Error: ", L"[Error] Error al crear directorio. Código: ")) + std::to_wstring(GetLastError()), theme.syntaxInvalidCommand);
                     block.exitCode = 1;
                 }
             }
         } else if (cmd == L"rm" || cmd == L"del") {
             if (args.empty()) {
-                AddLine(L"Uso: rm <arquivo>", theme.syntaxInvalidCommand);
+                AddLine(I18n::Tr(L"Uso: rm <arquivo>", L"Usage: rm <file>", L"Uso: rm <archivo>"), theme.syntaxInvalidCommand);
                 block.exitCode = 1;
             } else {
                 std::wstring fullPath = cwd + L"\\" + args;
                 if (DeleteFileW(fullPath.c_str()) || RemoveDirectoryW(fullPath.c_str())) {
-                    AddLine(L"[OK] Removido: " + args, theme.syntaxValidCommand);
+                    AddLine(std::wstring(I18n::Tr(L"[OK] Removido: ", L"[OK] Removed: ", L"[OK] Eliminado: ")) + args, theme.syntaxValidCommand);
                 } else {
-                    AddLine(L"[Erro] Falha ao remover. Erro: " + std::to_wstring(GetLastError()), theme.syntaxInvalidCommand);
+                    AddLine(std::wstring(I18n::Tr(L"[Erro] Falha ao remover. Erro: ", L"[Error] Failed to remove. Error: ", L"[Error] Error al eliminar. Código: ")) + std::to_wstring(GetLastError()), theme.syntaxInvalidCommand);
                     block.exitCode = 1;
                 }
             }
         } else if (cmd == L"theme") {
             if (args.empty()) {
-                AddLine(L"Temas disponíveis: Pitch Black, Galaxy, VS Code Like, Blue, Light", theme.textDim);
-                AddLine(L"Tema atual: " + theme.name, theme.accent, true);
+                AddLine(I18n::Tr(
+                    L"Temas disponíveis: Pitch Black, Galaxy, VS Code Like, Blue, Light, Pip-Boy Green, Pip-Boy Amber, PowerShell ISE, Warm Sepia",
+                    L"Available themes: Pitch Black, Galaxy, VS Code Like, Blue, Light, Pip-Boy Green, Pip-Boy Amber, PowerShell ISE, Warm Sepia",
+                    L"Temas disponibles: Pitch Black, Galaxy, VS Code Like, Blue, Light, Pip-Boy Green, Pip-Boy Amber, PowerShell ISE, Warm Sepia"
+                ), theme.textDim);
+                AddLine(std::wstring(I18n::Tr(L"Tema atual: ", L"Current theme: ", L"Tema actual: ")) + theme.name, theme.accent, true);
             } else {
                 onThemeChange(args);
-                AddLine(L"\u2714 Tema alterado para: " + args, theme.syntaxValidCommand);
+                AddLine(std::wstring(I18n::Tr(L"[OK] Tema alterado para: ", L"[OK] Theme changed to: ", L"[OK] Tema cambiado a: ")) + args, theme.syntaxValidCommand);
             }
         } else if (cmd == L"mode") {
             std::wstring m = ToLower(args);
             if (m == L"cmd") {
                 onModeChange(ShellMode::ModeCMD);
-                AddLine(L"\u2714 Modo alterado para: CMD (>_)", theme.promptCmd, true);
+                AddLine(I18n::Tr(L"[OK] Modo alterado para: CMD (>_)", L"[OK] Mode changed to: CMD (>_)", L"[OK] Modo cambiado a: CMD (>_)"), theme.promptCmd, true);
             } else if (m == L"pw" || m == L"powershell") {
                 onModeChange(ShellMode::ModePW);
-                AddLine(L"\u2714 Modo alterado para: PowerShell (\u26A1)", theme.promptPw, true);
+                AddLine(I18n::Tr(L"[OK] Modo alterado para: PowerShell (PS>)", L"[OK] Mode changed to: PowerShell (PS>)", L"[OK] Modo cambiado a: PowerShell (PS>)"), theme.promptPw, true);
             } else {
-                AddLine(L"Uso: mode <pw | cmd>", theme.syntaxInvalidCommand);
+                AddLine(I18n::Tr(L"Uso: mode <pw | cmd>", L"Usage: mode <pw | cmd>", L"Uso: mode <pw | cmd>"), theme.syntaxInvalidCommand);
             }
         } else if (cmd == L"gstatus") {
             ExecuteGStatus(cwd, block, theme);

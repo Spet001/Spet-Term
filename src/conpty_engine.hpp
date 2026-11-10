@@ -801,8 +801,7 @@ public:
             if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
                 std::lock_guard<std::mutex> lock(blockMutex);
                 StyledLine sl;
-                bool ptbr = (I18n::GetResolvedLanguage() == LanguageMode::PtBR);
-                sl.rawText = ptbr ? L"Falha ao criar pipes de execucao." : L"Failed to create execution pipes.";
+                sl.rawText = I18n::Tr(L"Falha ao criar pipes de execucao.", L"Failed to create execution pipes.", L"Error al crear tuberías de ejecución.");
                 sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
                 pBlock->outputLines.push_back(sl);
                 pBlock->isRunning = false;
@@ -873,7 +872,7 @@ public:
                 }
                 std::lock_guard<std::mutex> lock(blockMutex);
                 StyledLine sl;
-                sl.rawText = L"Falha ao iniciar processo: " + std::to_wstring(GetLastError());
+                sl.rawText = std::wstring(I18n::Tr(L"Falha ao iniciar processo: ", L"Failed to start process: ", L"Error al iniciar el proceso: ")) + std::to_wstring(GetLastError());
                 sl.spans.push_back({ sl.rawText, theme.syntaxInvalidCommand });
                 pBlock->outputLines.push_back(sl);
                 pBlock->isRunning = false;

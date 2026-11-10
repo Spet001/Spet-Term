@@ -5,11 +5,22 @@
 #include "syntax_autocomplete.hpp"
 #include "git_engine.hpp"
 #include "workfolder.hpp"
+#include "compression_engine.hpp"
+#include "game_file_engine.hpp"
+#include "preview_3d_media.hpp"
+#include "file_explorer.hpp"
 
 namespace speta {
 
+enum class PaneMode {
+    Launcher,
+    Terminal,
+    FileExplorer
+};
+
 struct TerminalPane {
     int id = 1;
+    PaneMode paneMode = PaneMode::Terminal;
     std::wstring cwd;
     std::wstring prevCwd;
     ShellMode mode = ShellMode::ModePW;
@@ -44,6 +55,68 @@ struct TerminalPane {
     ULONGLONG lastGitCheckTick = 0;
     bool gitInfoDirty = true;
 
+    // Pane bounding rect & Launcher mode UI state
+    D2D1_RECT_F paneBoundsRect{ 0, 0, 0, 0 };
+    int hoveredLauncherCard = -1;
+    int selectedLauncherCard = 0;
+    D2D1_RECT_F launcherCardRects[5]{};
+
+    // File Explorer state & Preview Inspector cache
+    FileExplorerPaneState explorer;
+    std::wstring previewedKey;
+    int activeInspectorTab = 0; // 0 = Preview, 1 = Hex Inspector, 2 = Container/PE Info
+    ID2D1Bitmap* explorerPreviewBitmap = nullptr;
+    D2D1_SIZE_F explorerPreviewBitmapSize{ 0, 0 };
+    std::vector<uint8_t> explorerPreviewRgba;
+    uint32_t explorerPreviewRgbaW = 0;
+    uint32_t explorerPreviewRgbaH = 0;
+    std::wstring explorerPreviewImageFormat;
+    std::vector<std::wstring> explorerPreviewTextLines;
+    std::vector<uint8_t> explorerPreviewRawBytes;
+    size_t hexSelectedOffset = 0;
+    float explorerPreviewScrollY = 0.0f;
+    bool explorerPreviewIs3D = false;
+    bool explorerPreviewIsAudio = false;
+    bool explorerPreviewIsVideo = false;
+    bool explorerPreviewIsDoomMap = false;
+    DoomMapGeometry explorerDoomMap;
+    bool explorerPreviewIsExecutable = false;
+    ExecutableInspectInfo explorerExeInfo;
+    std::vector<LockingProcessInfo> explorerLockingProcs;
+    bool explorerLockCheckDone = false;
+
+    // Hit-test rectangles for File Explorer UI
+    D2D1_RECT_F expBackBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expUpBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expRefreshBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expSearchBoxRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expSearchModeBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expLinkCwdBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expF5CopyBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expF6MoveBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expExtractAllBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expTableRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expPreviewRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expViewport3DRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expColNameRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expColSizeRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expColTypeRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expColDateRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expInspectorTabRects[3]{};
+    D2D1_RECT_F expActionEditBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionExportPngBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionPlayAudioBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionStopAudioBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionAudioSeekRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F exp3DWireframeBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F exp3DAutoRotBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F exp3DResetBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expUnlockBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expCalcHashBtnRect{ 0, 0, 0, 0 };
+    bool expSearchFocused = false;
+    bool isDragging3D = false;
+    POINT lastMouse3D{ 0, 0 };
+
     TerminalPane() {
         wchar_t buf[MAX_PATH] = {};
         if (GetCurrentDirectoryW(MAX_PATH, buf) == 0 || buf[0] == L'\0') {
@@ -52,10 +125,12 @@ struct TerminalPane {
             cwd = buf;
         }
         prevCwd = cwd;
+        explorer.NavigateToDirectory(cwd, true);
     }
 
     ~TerminalPane() {
         SafeRelease(previewThumb);
+        SafeRelease(explorerPreviewBitmap);
     }
 
     TerminalPane(const TerminalPane&) = delete;
@@ -95,12 +170,30 @@ struct TerminalTab {
     ID2D1Bitmap* editorImageBitmap = nullptr;
     D2D1_SIZE_F editorImageSize{ 0, 0 };
 
+    // Virtual Game Archive in-place editing & repacking
+    bool isVirtualArchiveEditor = false;
+    std::shared_ptr<ParsedGameArchive> editorVirtualArchive;
+    size_t editorVirtualEntryIndex = 0;
+
     ~TerminalTab() {
         SafeRelease(editorImageBitmap);
     }
 
     bool SaveEditorFile() {
-        if (!isEditor || editorFilePath.empty()) return false;
+        if (!isEditor) return false;
+        if (isVirtualArchiveEditor && editorVirtualArchive && editorVirtualEntryIndex < editorVirtualArchive->entries.size()) {
+            std::string utf8 = WideToUtf8(editorContent);
+            auto& entry = editorVirtualArchive->entries[editorVirtualEntryIndex];
+            entry.inlineData.assign(utf8.begin(), utf8.end());
+            entry.uncompressedSize = entry.inlineData.size();
+            entry.crc32 = ComputeCrc32(entry.inlineData);
+            if (!SaveModifiedArchive(*editorVirtualArchive, editorVirtualArchive->filePath)) {
+                return false;
+            }
+            isDirty = false;
+            return true;
+        }
+        if (editorFilePath.empty()) return false;
         std::ofstream outFile(editorFilePath, std::ios::binary | std::ios::trunc);
         if (!outFile.is_open()) return false;
         std::string utf8 = WideToUtf8(editorContent);
@@ -115,14 +208,24 @@ struct TerminalTab {
         panes.push_back(std::make_unique<TerminalPane>());
     }
 
-    explicit TerminalTab(ShellMode mode, int tabId = 1) : id(tabId) {
+    explicit TerminalTab(ShellMode mode, int tabId = 1, PaneMode initialPaneMode = PaneMode::Terminal) : id(tabId) {
         auto p = std::make_unique<TerminalPane>();
         p->mode = mode;
-        title = (mode == ShellMode::ModePW) ? L"Windows PowerShell" : L"cmd.exe";
+        p->paneMode = initialPaneMode;
+        if (initialPaneMode == PaneMode::Launcher) {
+            title = I18n::Get(StringId::Launcher_Title);
+        } else if (initialPaneMode == PaneMode::FileExplorer) {
+            title = FormatProjectTabTitle(p->explorer.currentDirectory, mode, initialPaneMode);
+        } else {
+            title = (mode == ShellMode::ModePW) ? L"Windows PowerShell" : L"cmd.exe";
+        }
         panes.push_back(std::move(p));
     }
 
-    static std::wstring FormatProjectTabTitle(const std::wstring& cwd, ShellMode mode) {
+    static std::wstring FormatProjectTabTitle(const std::wstring& cwd, ShellMode mode, PaneMode pm = PaneMode::Terminal) {
+        if (pm == PaneMode::Launcher) {
+            return I18n::Get(StringId::Launcher_Title);
+        }
         std::wstring p = cwd;
         while (p.size() > 3 && (p.back() == L'\\' || p.back() == L'/')) {
             p.pop_back();
@@ -138,6 +241,9 @@ struct TerminalTab {
             } else {
                 folderName = p.empty() ? L"terminal" : p;
             }
+        }
+        if (pm == PaneMode::FileExplorer) {
+            return folderName + L" (files)";
         }
         std::wstring suffix = (mode == ShellMode::ModePW) ? L" (pw)" : L" (cmd)";
         return folderName + suffix;
@@ -156,16 +262,26 @@ struct TerminalTab {
 
     void UpdateDefaultTitle() {
         if (customTitle || hasCustomTitle) return;
-        if (useProjectTitle) {
-            title = FormatProjectTabTitle(GetActivePane().cwd, GetActivePane().mode);
+        const auto& ap = GetActivePane();
+        if (ap.paneMode == PaneMode::Launcher) {
+            title = I18n::Get(StringId::Launcher_Title);
+        } else if (ap.paneMode == PaneMode::FileExplorer) {
+            std::wstring pathForTitle = ap.explorer.inVirtualArchive ? ap.explorer.archiveHostPath : ap.explorer.currentDirectory;
+            title = FormatProjectTabTitle(pathForTitle, ap.mode, PaneMode::FileExplorer);
+        } else if (useProjectTitle) {
+            title = FormatProjectTabTitle(ap.cwd, ap.mode, ap.paneMode);
         } else {
-            title = (GetActivePane().mode == ShellMode::ModePW) ? L"Windows PowerShell" : L"cmd.exe";
+            title = (ap.mode == ShellMode::ModePW) ? L"Windows PowerShell" : L"cmd.exe";
         }
     }
 
     void UpdateProjectTitle() {
         if (customTitle || hasCustomTitle) return;
-        title = FormatProjectTabTitle(GetActivePane().cwd, GetActivePane().mode);
+        const auto& ap = GetActivePane();
+        std::wstring pathForTitle = (ap.paneMode == PaneMode::FileExplorer)
+            ? (ap.explorer.inVirtualArchive ? ap.explorer.archiveHostPath : ap.explorer.currentDirectory)
+            : ap.cwd;
+        title = FormatProjectTabTitle(pathForTitle, ap.mode, ap.paneMode);
     }
 };
 

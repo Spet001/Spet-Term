@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -89,7 +90,10 @@ public:
                         driveItem.fullPath = dStr;
                         driveItem.isDirectory = true;
                         driveItem.formattedSize = L"<DRIVE>";
-                        driveItem.previewLines = { L"Unidade de disco / Drive " + dStr, L"Pressione Enter para alternar para esta unidade." };
+                        driveItem.previewLines = {
+                            std::wstring(I18n::Tr(L"Unidade de disco: ", L"Disk drive: ", L"Unidad de disco: ")) + dStr,
+                            I18n::Tr(L"Pressione Enter para alternar para esta unidade.", L"Press Enter to switch to this drive.", L"Presione Enter para cambiar a esta unidad.")
+                        };
                         dirs.push_back(std::move(driveItem));
                     }
                     pDrive += wcslen(pDrive) + 1;
@@ -209,7 +213,7 @@ inline std::vector<ProjectTask> DetectProjectTasks(const std::wstring& cwd) {
         tasks.push_back({
             L"Run build.ps1",
             L"powershell -ExecutionPolicy Bypass -File .\\build.ps1",
-            L"Compila projeto com Clang++ / Direct2D",
+            I18n::Tr(L"Compila projeto com Clang++ / Direct2D", L"Build project with Clang++ / Direct2D", L"Compila proyecto con Clang++ / Direct2D"),
             "green_chip_24.png"
         });
     }
@@ -219,7 +223,7 @@ inline std::vector<ProjectTask> DetectProjectTasks(const std::wstring& cwd) {
         tasks.push_back({
             L"Run test_suite.exe",
             L".\\tests\\test_suite.exe",
-            L"Executa suite de testes automatizados",
+            I18n::Tr(L"Executa suite de testes automatizados", L"Run automated test suite", L"Ejecuta suite de pruebas automatizadas"),
             "green_chip.png"
         });
     }
@@ -229,7 +233,7 @@ inline std::vector<ProjectTask> DetectProjectTasks(const std::wstring& cwd) {
         tasks.push_back({
             L"CMake Build",
             L"cmake --build build",
-            L"Compila via CMake",
+            I18n::Tr(L"Compila via CMake", L"Build via CMake", L"Compila vía CMake"),
             "green_chip.png"
         });
     }
@@ -239,7 +243,7 @@ inline std::vector<ProjectTask> DetectProjectTasks(const std::wstring& cwd) {
         tasks.push_back({
             L"Make",
             L"make",
-            L"Compila via Makefile",
+            I18n::Tr(L"Compila via Makefile", L"Build via Makefile", L"Compila vía Makefile"),
             "green_chip.png"
         });
     }
@@ -249,7 +253,7 @@ inline std::vector<ProjectTask> DetectProjectTasks(const std::wstring& cwd) {
         tasks.push_back({
             L"npm test",
             L"npm test",
-            L"Roda testes de Node/JS",
+            I18n::Tr(L"Roda testes de Node/JS", L"Run Node/JS tests", L"Ejecuta pruebas de Node/JS"),
             "gba_cartridge.png"
         });
     }

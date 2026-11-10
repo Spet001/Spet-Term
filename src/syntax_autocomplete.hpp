@@ -406,7 +406,7 @@ public:
                 if (!delimStack.empty() && delimStack.back().first == L'(') delimStack.pop_back();
                 else {
                     analysis.hasSyntaxError = true;
-                    analysis.syntaxErrorMessage = L"Parêntese ')' inesperado sem abertura";
+                    analysis.syntaxErrorMessage = I18n::Tr(L"Parêntese ')' inesperado sem abertura", L"Unexpected closing parenthesis ')'", L"Paréntesis ')' inesperado sin apertura");
                     analysis.errorCol = i;
                     break;
                 }
@@ -414,7 +414,7 @@ public:
                 if (!delimStack.empty() && delimStack.back().first == L'[') delimStack.pop_back();
                 else {
                     analysis.hasSyntaxError = true;
-                    analysis.syntaxErrorMessage = L"Colchete ']' inesperado sem abertura";
+                    analysis.syntaxErrorMessage = I18n::Tr(L"Colchete ']' inesperado sem abertura", L"Unexpected closing bracket ']'", L"Corchete ']' inesperado sin apertura");
                     analysis.errorCol = i;
                     break;
                 }
@@ -422,7 +422,7 @@ public:
                 if (!delimStack.empty() && delimStack.back().first == L'{') delimStack.pop_back();
                 else {
                     analysis.hasSyntaxError = true;
-                    analysis.syntaxErrorMessage = L"Chave '}' inesperada sem abertura";
+                    analysis.syntaxErrorMessage = I18n::Tr(L"Chave '}' inesperada sem abertura", L"Unexpected closing brace '}'", L"Llave '}' inesperada sin apertura");
                     analysis.errorCol = i;
                     break;
                 }
@@ -432,14 +432,14 @@ public:
         if (!analysis.hasSyntaxError && inQuote != 0) {
             analysis.hasSyntaxError = true;
             analysis.errorCol = quoteStart;
-            analysis.syntaxErrorMessage = (inQuote == L'\"') ? L"Aspas duplas '\"' não foram fechadas" : L"Aspas simples '\'' não foram fechadas";
+            analysis.syntaxErrorMessage = (inQuote == L'\"') ? I18n::Tr(L"Aspas duplas '\"' não foram fechadas", L"Unclosed double quote '\"'", L"Comillas dobles '\"' sin cerrar") : I18n::Tr(L"Aspas simples '\'' não foram fechadas", L"Unclosed single quote '\''", L"Comilla simple '\'' sin cerrar");
         } else if (!analysis.hasSyntaxError && !delimStack.empty()) {
             analysis.hasSyntaxError = true;
             wchar_t unclosed = delimStack.back().first;
             analysis.errorCol = delimStack.back().second;
-            if (unclosed == L'(') analysis.syntaxErrorMessage = L"Parêntese '(' não foi fechado";
-            else if (unclosed == L'[') analysis.syntaxErrorMessage = L"Colchete '[' não foi fechado";
-            else if (unclosed == L'{') analysis.syntaxErrorMessage = L"Chave '{' não foi fechada";
+            if (unclosed == L'(') analysis.syntaxErrorMessage = I18n::Tr(L"Parêntese '(' não foi fechado", L"Unclosed parenthesis '('", L"Paréntesis '(' sin cerrar");
+            else if (unclosed == L'[') analysis.syntaxErrorMessage = I18n::Tr(L"Colchete '[' não foi fechado", L"Unclosed bracket '['", L"Corchete '[' sin cerrar");
+            else if (unclosed == L'{') analysis.syntaxErrorMessage = I18n::Tr(L"Chave '{' não foi fechada", L"Unclosed brace '{'", L"Llave '{' sin cerrar");
         }
 
         size_t idx = 0;
@@ -578,14 +578,14 @@ public:
                         if (!exists) {
                             tok.color = theme.syntaxInvalidCommand;
                             tok.isUnderlined = true;
-                            analysis.ghostSuggestion = L"\u26A0 Arquivo '" + word + L"' não existe no diretório atual";
+                            analysis.ghostSuggestion = std::wstring(I18n::Tr(L"\u26A0 Arquivo '", L"\u26A0 File '", L"\u26A0 Archivo '")) + word + I18n::Tr(L"' não existe no diretório atual", L"' does not exist in current directory", L"' no existe en el directorio actual");
                         }
                     } else if ((firstCommand == L"clang++" || firstCommand == L"g++" || firstCommand == L"cl") &&
                                (EndsWith(ToLower(word), L".cpp") || EndsWith(ToLower(word), L".c") || EndsWith(ToLower(word), L".cxx"))) {
                         if (!exists) {
                             tok.color = theme.syntaxInvalidCommand;
                             tok.isUnderlined = true;
-                            analysis.ghostSuggestion = L"\u26A0 Arquivo fonte '" + word + L"' não encontrado";
+                            analysis.ghostSuggestion = std::wstring(I18n::Tr(L"\u26A0 Arquivo fonte '", L"\u26A0 Source file '", L"\u26A0 Archivo fuente '")) + word + I18n::Tr(L"' não encontrado", L"' not found", L"' no encontrado");
                         }
                     }
                 }
@@ -632,9 +632,9 @@ public:
                     if (!analysis.hasSyntaxError && !pyDelims.empty()) {
                         analysis.hasSyntaxError = true;
                         wchar_t unclosed = pyDelims.back();
-                        if (unclosed == L'(') analysis.syntaxErrorMessage = L"Sintaxe Python: Parêntese '(' não foi fechado";
-                        else if (unclosed == L'[') analysis.syntaxErrorMessage = L"Sintaxe Python: Colchete '[' não foi fechado";
-                        else if (unclosed == L'{') analysis.syntaxErrorMessage = L"Sintaxe Python: Chave '{' não foi fechada";
+                        if (unclosed == L'(') analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe Python: Parêntese '(' não foi fechado", L"Python syntax: Unclosed parenthesis '('", L"Sintaxis Python: Paréntesis '(' sin cerrar");
+                        else if (unclosed == L'[') analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe Python: Colchete '[' não foi fechado", L"Python syntax: Unclosed bracket '['", L"Sintaxis Python: Corchete '[' sin cerrar");
+                        else if (unclosed == L'{') analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe Python: Chave '{' não foi fechada", L"Python syntax: Unclosed brace '{'", L"Sintaxis Python: Llave '{' sin cerrar");
                     }
 
                     if (!analysis.hasSyntaxError) {
@@ -644,7 +644,7 @@ public:
                             if (kwPos != std::wstring::npos) {
                                 if (pyCode.find(L':', kwPos) == std::wstring::npos) {
                                     analysis.hasSyntaxError = true;
-                                    analysis.syntaxErrorMessage = L"Sintaxe Python: Faltando dois-pontos ':' após declaração de bloco";
+                                    analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe Python: Faltando dois-pontos ':' após declaração de bloco", L"Python syntax: Missing colon ':' after block statement", L"Sintaxis Python: Falta dos puntos ':' tras declaración de bloque");
                                     break;
                                 }
                             }
@@ -689,9 +689,9 @@ public:
                     if (!jsDelims.empty() && !analysis.hasSyntaxError) {
                         analysis.hasSyntaxError = true;
                         wchar_t unclosed = jsDelims.back();
-                        if (unclosed == L'(') analysis.syntaxErrorMessage = L"Sintaxe JS: Parêntese '(' não foi fechado";
-                        else if (unclosed == L'[') analysis.syntaxErrorMessage = L"Sintaxe JS: Colchete '[' não foi fechado";
-                        else if (unclosed == L'{') analysis.syntaxErrorMessage = L"Sintaxe JS: Chave '{' não foi fechada";
+                        if (unclosed == L'(') analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe JS: Parêntese '(' não foi fechado", L"JS syntax: Unclosed parenthesis '('", L"Sintaxis JS: Paréntesis '(' sin cerrar");
+                        else if (unclosed == L'[') analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe JS: Colchete '[' não foi fechado", L"JS syntax: Unclosed bracket '['", L"Sintaxis JS: Corchete '[' sin cerrar");
+                        else if (unclosed == L'{') analysis.syntaxErrorMessage = I18n::Tr(L"Sintaxe JS: Chave '{' não foi fechada", L"JS syntax: Unclosed brace '{'", L"Sintaxis JS: Llave '{' sin cerrar");
                     }
                 }
             }
@@ -714,7 +714,7 @@ public:
                             if (s.first == scriptName) { found = true; break; }
                         }
                         if (!found) {
-                            analysis.ghostSuggestion = L"\u26A0 Script '" + scriptName + L"' não encontrado no package.json";
+                            analysis.ghostSuggestion = std::wstring(I18n::Tr(L"\u26A0 Script '", L"\u26A0 Script '", L"\u26A0 Script '")) + scriptName + I18n::Tr(L"' não encontrado no package.json", L"' not found in package.json", L"' no encontrado en package.json");
                         }
                     }
                 }
@@ -779,7 +779,7 @@ public:
                         item.text = t;
                         item.displayText = t;
                         item.type = L"[cli]";
-                        item.detail = L"Executável de sistema";
+                        item.detail = I18n::Tr(L"Executável de sistema", L"System executable", L"Ejecutable del sistema");
                         items.push_back(item);
                         if (items.size() >= 8) return items;
                     }
@@ -837,7 +837,7 @@ public:
                             item.text = b;
                             item.displayText = b;
                             item.type = L"[branch]";
-                            item.detail = L"Branch local";
+                            item.detail = I18n::Tr(L"Branch local", L"Local branch", L"Rama local");
                             items.push_back(item);
                             if (items.size() >= 8) return items;
                         }

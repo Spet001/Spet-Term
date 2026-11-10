@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -29,6 +30,9 @@ struct AppSettings {
     bool systemCursor = true; // true = native Windows cursor, false = custom Direct2D cursor (experimental)
     bool warnMultiLinePaste = true; // true = security warning on multi-line batch paste
     bool onboardingCompleted = false;
+    std::string defaultStartupMode = "launcher"; // "launcher", "explorer", "pw", "cmd"
+    bool explorerShowFolderSizes = false; // disabled by default so HDDs are fast
+    bool explorerLinkCwd = true; // bidirectional CWD sync between split File Explorer and Terminal
     std::vector<SnippetItem> snippets;
 
     static bool IsAppPathTermRegistered() {
@@ -69,12 +73,36 @@ struct AppSettings {
 
     void InitDefaultSnippets() {
         snippets = {
-            { L"Git: Commit & Push", L"git add . && git commit -m \"update\" && git push", L"Salva tudo e envia pro remoto" },
-            { L"Git: Undo Last Commit", L"git reset --soft HEAD~1", L"Desfaz commit mantendo arquivos no stage" },
-            { L"Processos: Top RAM", L"Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5", L"Lista os 5 processos que mais usam memória" },
-            { L"Rede: Portas Abertas", L"netstat -ano | findstr LISTENING", L"Lista todas as portas TCP em escuta" },
-            { L"Build: Compilar C++", L".\\build.ps1", L"Compila Spet@term com Clang++" },
-            { L"Limpeza: Cache Temp", L"Remove-Item -Path \"$env:TEMP\\*\" -Recurse -Force -ErrorAction SilentlyContinue", L"Libera espaço apagando temporários do Windows" }
+            {
+                I18n::Tr(L"Git: Commit & Push", L"Git: Commit & Push", L"Git: Commit y Push"),
+                L"git add . && git commit -m \"update\" && git push",
+                I18n::Tr(L"Salva tudo e envia pro remoto", L"Stage all, commit and push to remote", L"Guarda todo y envía al remoto")
+            },
+            {
+                I18n::Tr(L"Git: Undo Last Commit", L"Git: Undo Last Commit", L"Git: Deshacer Último Commit"),
+                L"git reset --soft HEAD~1",
+                I18n::Tr(L"Desfaz commit mantendo arquivos no stage", L"Undo last commit keeping files staged", L"Deshace el commit manteniendo archivos en stage")
+            },
+            {
+                I18n::Tr(L"Processos: Top RAM", L"Processes: Top RAM", L"Procesos: Top RAM"),
+                L"Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5",
+                I18n::Tr(L"Lista os 5 processos que mais usam memória", L"List top 5 memory-consuming processes", L"Lista los 5 procesos que más memoria usan")
+            },
+            {
+                I18n::Tr(L"Rede: Portas Abertas", L"Network: Open Ports", L"Red: Puertos Abiertos"),
+                L"netstat -ano | findstr LISTENING",
+                I18n::Tr(L"Lista todas as portas TCP em escuta", L"List all listening TCP ports", L"Lista todos los puertos TCP en escucha")
+            },
+            {
+                I18n::Tr(L"Build: Compilar C++", L"Build: Compile C++", L"Build: Compilar C++"),
+                L".\\build.ps1",
+                I18n::Tr(L"Compila Spet@term com Clang++", L"Build Spet@term with Clang++", L"Compila Spet@term con Clang++")
+            },
+            {
+                I18n::Tr(L"Limpeza: Cache Temp", L"Cleanup: Temp Cache", L"Limpieza: Caché Temp"),
+                L"Remove-Item -Path \"$env:TEMP\\*\" -Recurse -Force -ErrorAction SilentlyContinue",
+                I18n::Tr(L"Libera espaço apagando temporários do Windows", L"Free disk space by clearing Windows temp files", L"Libera espacio borrando temporales de Windows")
+            }
         };
     }
 
@@ -116,6 +144,9 @@ struct AppSettings {
         ss << L"  \"statusBarVisible\": " << (statusBarVisible ? L"true" : L"false") << L",\n";
         ss << L"  \"warnMultiLinePaste\": " << (warnMultiLinePaste ? L"true" : L"false") << L",\n";
         ss << L"  \"onboardingCompleted\": " << (onboardingCompleted ? L"true" : L"false") << L",\n";
+        ss << L"  \"defaultStartupMode\": \"" << Utf8ToWide(defaultStartupMode) << L"\",\n";
+        ss << L"  \"explorerShowFolderSizes\": " << (explorerShowFolderSizes ? L"true" : L"false") << L",\n";
+        ss << L"  \"explorerLinkCwd\": " << (explorerLinkCwd ? L"true" : L"false") << L",\n";
         ss << L"  \"snippets\": [\n";
         for (size_t i = 0; i < snippets.size(); ++i) {
             ss << L"    {\n";
@@ -253,6 +284,11 @@ struct AppSettings {
         systemCursor = ExtractBool(L"systemCursor", systemCursor);
         warnMultiLinePaste = ExtractBool(L"warnMultiLinePaste", warnMultiLinePaste);
         onboardingCompleted = ExtractBool(L"onboardingCompleted", onboardingCompleted);
+
+        std::wstring dsm = ExtractString(L"defaultStartupMode");
+        if (!dsm.empty()) defaultStartupMode = WideToUtf8(dsm);
+        explorerShowFolderSizes = ExtractBool(L"explorerShowFolderSizes", explorerShowFolderSizes);
+        explorerLinkCwd = ExtractBool(L"explorerLinkCwd", explorerLinkCwd);
 
         // Parse snippets array if present
         size_t snipPos = json.find(L"\"snippets\"");

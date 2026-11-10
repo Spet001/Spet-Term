@@ -45,6 +45,8 @@
 #include <iomanip>
 #include <cmath>
 
+#include "i18n.hpp"
+
 namespace speta {
 
 template <typename T>
@@ -175,7 +177,7 @@ inline std::wstring FormatSingleLineCommandTitle(const std::wstring& rawCmd) {
     }
     if (firstNonEmpty.empty()) firstNonEmpty = L"batch";
     if (lineCount > 1) {
-        return firstNonEmpty + L"  [Batch " + std::to_wstring(lineCount) + L" linhas]";
+        return firstNonEmpty + L"  [Batch " + std::to_wstring(lineCount) + I18n::Tr(L" linhas]", L" lines]", L" lineas]");
     }
     return firstNonEmpty;
 }
@@ -235,13 +237,13 @@ inline std::wstring FormatRelativeTime(int64_t secondsAgo) {
     if (secondsAgo < 0) secondsAgo = 0;
     wchar_t buf[64];
     if (secondsAgo < 60) {
-        swprintf_s(buf, L"há %llds", secondsAgo);
+        swprintf_s(buf, I18n::Tr(L"há %llds", L"%llds ago", L"hace %llds"), secondsAgo);
     } else if (secondsAgo < 3600) {
-        swprintf_s(buf, L"há %lldmin", secondsAgo / 60);
+        swprintf_s(buf, I18n::Tr(L"há %lldmin", L"%lldmin ago", L"hace %lldmin"), secondsAgo / 60);
     } else if (secondsAgo < 86400) {
-        swprintf_s(buf, L"há %lldh", secondsAgo / 3600);
+        swprintf_s(buf, I18n::Tr(L"há %lldh", L"%lldh ago", L"hace %lldh"), secondsAgo / 3600);
     } else {
-        swprintf_s(buf, L"há %lldd", secondsAgo / 86400);
+        swprintf_s(buf, I18n::Tr(L"há %lldd", L"%lldd ago", L"hace %lldd"), secondsAgo / 86400);
     }
     return buf;
 }

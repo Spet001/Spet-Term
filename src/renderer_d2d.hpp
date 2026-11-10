@@ -53,6 +53,15 @@ public:
     bool usingDComp = false;
     bool suppressEmptyState = false;
     WallpaperEngine wallpaperEngine;
+    Preview3DEngine preview3D;
+    WallpaperEngine previewMediaEngine;
+
+    // File Explorer Transfer Queue & Settings v5 Rects
+    D2D1_RECT_F expTransferPauseRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expTransferCancelRect{ 0, 0, 0, 0 };
+    uint64_t expTransferActiveJobId = 0;
+    D2D1_RECT_F setStartupModeRects[4]{};
+    D2D1_RECT_F setExpFolderSizeToggleRect{ 0, 0, 0, 0 };
 
     IDWriteFactory* pDWriteFactory = nullptr;
 
@@ -572,6 +581,7 @@ public:
             pRenderTarget = pD2DContext;
             usingDComp = true;
             wallpaperEngine.Initialize(pD3DDevice, pD3DContext, pD2DContext, pWICFactory, hwnd);
+            previewMediaEngine.Initialize(pD3DDevice, pD3DContext, pD2DContext, pWICFactory, hwnd);
             pRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             hr = pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &pSolidBrush);
             if (FAILED(hr)) break;
@@ -612,6 +622,8 @@ public:
         SafeRelease(pSolidBrush);
         SafeRelease(pBorderBrush);
         wallpaperEngine.Shutdown();
+        preview3D.Cleanup();
+        previewMediaEngine.Shutdown();
         if (usingDComp) {
             if (pD2DContext) pD2DContext->SetTarget(nullptr);
             SafeRelease(pTargetBitmap);
@@ -701,6 +713,56 @@ public:
             return pBitmap;
         }
         return nullptr;
+    }
+
+    ID2D1Bitmap* LoadBitmapFromMemory(const void* data, UINT size, D2D1_SIZE_F& outSize) {
+        if (!pRenderTarget || !pWICFactory || !data || size == 0) return nullptr;
+        IWICStream* pStream = nullptr;
+        HRESULT hr = pWICFactory->CreateStream(&pStream);
+        if (FAILED(hr)) return nullptr;
+        hr = pStream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<void*>(data)), size);
+        if (FAILED(hr)) { SafeRelease(pStream); return nullptr; }
+        IWICBitmapDecoder* pDecoder = nullptr;
+        hr = pWICFactory->CreateDecoderFromStream(pStream, nullptr, WICDecodeMetadataCacheOnLoad, &pDecoder);
+        SafeRelease(pStream);
+        if (FAILED(hr) || !pDecoder) return nullptr;
+        IWICBitmapFrameDecode* pFrame = nullptr;
+        hr = pDecoder->GetFrame(0, &pFrame);
+        SafeRelease(pDecoder);
+        if (FAILED(hr) || !pFrame) return nullptr;
+        IWICFormatConverter* pConverter = nullptr;
+        hr = pWICFactory->CreateFormatConverter(&pConverter);
+        if (FAILED(hr) || !pConverter) { SafeRelease(pFrame); return nullptr; }
+        hr = pConverter->Initialize(pFrame, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom);
+        SafeRelease(pFrame);
+        if (FAILED(hr)) { SafeRelease(pConverter); return nullptr; }
+        UINT w = 0, h = 0;
+        pConverter->GetSize(&w, &h);
+        outSize = D2D1::SizeF(static_cast<float>(w), static_cast<float>(h));
+        ID2D1Bitmap* pBitmap = nullptr;
+        hr = pRenderTarget->CreateBitmapFromWicBitmap(pConverter, nullptr, &pBitmap);
+        SafeRelease(pConverter);
+        return SUCCEEDED(hr) ? pBitmap : nullptr;
+    }
+
+    ID2D1Bitmap* CreateBitmapFromRgbaBytes(const uint8_t* rgbaData, uint32_t width, uint32_t height) {
+        if (!pRenderTarget || !rgbaData || width == 0 || height == 0) return nullptr;
+        std::vector<uint8_t> bgra(static_cast<size_t>(width) * height * 4);
+        for (size_t i = 0, n = static_cast<size_t>(width) * height; i < n; ++i) {
+            uint8_t r = rgbaData[i * 4 + 0];
+            uint8_t g = rgbaData[i * 4 + 1];
+            uint8_t b = rgbaData[i * 4 + 2];
+            uint8_t a = rgbaData[i * 4 + 3];
+            bgra[i * 4 + 0] = static_cast<uint8_t>((static_cast<uint32_t>(b) * a) / 255);
+            bgra[i * 4 + 1] = static_cast<uint8_t>((static_cast<uint32_t>(g) * a) / 255);
+            bgra[i * 4 + 2] = static_cast<uint8_t>((static_cast<uint32_t>(r) * a) / 255);
+            bgra[i * 4 + 3] = a;
+        }
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ID2D1Bitmap* bmp = nullptr;
+        pRenderTarget->CreateBitmap(D2D1::SizeU(width, height), bgra.data(), width * 4, &props, &bmp);
+        return bmp;
     }
 
     void BeginDraw() {
@@ -1390,29 +1452,17 @@ public:
             }
 
             D2D1_RECT_F termIconRect = D2D1::RectF(iconX, 8.0f, iconX + 18.0f, 28.0f);
+            std::string tabIconName = "pw_bolt_16.png";
             if (tab.isEditor) {
-                std::string iconName = "file.png";
-                if (tab.isImagePreview) iconName = "image.png";
-                else {
-                    std::wstring ext = tab.editorFilePath;
-                    size_t dot = ext.find_last_of(L'.');
-                    if (dot != std::wstring::npos) {
-                        std::wstring e = ToLower(ext.substr(dot));
-                        if (e == L".py" || e == L".ps1" || e == L".bat" || e == L".cmd") iconName = "file_script.png";
-                        else if (e == L".txt" || e == L".md" || e == L".json" || e == L".ini") iconName = "file_text.png";
-                        else if (e == L".png" || e == L".jpg" || e == L".jpeg" || e == L".gif" || e == L".bmp" || e == L".ico") iconName = "image.png";
-                        else if (e == L".exe") iconName = "exe.png";
-                    }
-                }
-                SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, iconName, termIconRect, 16.0f, 16.0f);
-            } else {
-                SpriteAtlas::Instance().DrawSpriteCentered(
-                    pRenderTarget,
-                    SpriteId::TerminalWindow,
-                    termIconRect,
-                    16.0f, 16.0f
-                );
+                tabIconName = "file_code_16.png";
+            } else if (!tab.panes.empty() && tab.panes[0]->paneMode == PaneMode::FileExplorer) {
+                tabIconName = "folder_16.png";
+            } else if (!tab.panes.empty() && tab.panes[0]->paneMode == PaneMode::Launcher) {
+                tabIconName = "sparkles_16.png";
+            } else if (!tab.panes.empty() && tab.panes[0]->mode == ShellMode::ModeCMD) {
+                tabIconName = "cmd_prompt_16.png";
             }
+            SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, tabIconName, termIconRect, 16.0f, 16.0f);
             iconX += 20.0f;
 
             float titleMaxW = tabWidth - (iconX - tabX) - 26.0f;
@@ -1553,7 +1603,6 @@ public:
         DrawText(procBuf, procBadgeR.right + 8.0f, textY, dim, pUIFormatSmall);
 
         // SYS metrics and badge
-        bool ptbr = (settings.language == "pt-BR");
         wchar_t sysBuf[160];
         if (tm.sysTempValid && tm.sysTempC > 0.0) {
             if (tm.gpuTempValid && tm.gpuTempC > 0.0) {
@@ -1564,8 +1613,10 @@ public:
                            tm.sysCpu, tm.sysRamUsedGb, tm.sysRamTotalGb, tm.sysGpu, tm.sysTempC);
             }
         } else {
-            swprintf_s(sysBuf, ptbr ? L"CPU %.1f%%  |  RAM %.1f / %.1f GB  |  GPU %.1f%%  |  TEMP: n/d"
-                                    : L"CPU %.1f%%  |  RAM %.1f / %.1f GB  |  GPU %.1f%%  |  TEMP: N/A",
+            swprintf_s(sysBuf, I18n::Tr(
+                           L"CPU %.1f%%  |  RAM %.1f / %.1f GB  |  GPU %.1f%%  |  TEMP: n/d",
+                           L"CPU %.1f%%  |  RAM %.1f / %.1f GB  |  GPU %.1f%%  |  TEMP: N/A",
+                           L"CPU %.1f%%  |  RAM %.1f / %.1f GB  |  GPU %.1f%%  |  TEMP: N/D"),
                        tm.sysCpu, tm.sysRamUsedGb, tm.sysRamTotalGb, tm.sysGpu);
         }
 
@@ -1662,13 +1713,13 @@ public:
         }
 
         // Shortcut reference
-        bool ptbr = (language == "pt-BR");
+        (void)language;
         struct Row { int id; std::vector<std::wstring> keys; std::wstring label; };
         std::vector<Row> rows = {
-            { 0, { L"Ctrl", L"B" },  ptbr ? L"Explorador" : L"Workspace" },
-            { 1, { L"Ctrl", L"R" },  ptbr ? L"Historico" : L"History" },
-            { 3, { L"Ctrl", L"," },  ptbr ? L"Configuracoes" : L"Settings" },
-            { 4, { L"Ctrl", L"Shift", L"P" }, ptbr ? L"Comandos" : L"Commands" }
+            { 0, { L"Ctrl", L"B" },  I18n::Tr(L"Explorador", L"Workspace", L"Explorador") },
+            { 1, { L"Ctrl", L"R" },  I18n::Tr(L"Historico", L"History", L"Historial") },
+            { 3, { L"Ctrl", L"," },  I18n::Tr(L"Configuracoes", L"Settings", L"Ajustes") },
+            { 4, { L"Ctrl", L"Shift", L"P" }, I18n::Tr(L"Comandos", L"Commands", L"Comandos") }
         };
         float rowW = 265.0f, rowH = 36.0f, gap = 14.0f;
         float startX = cardX + (cardW - rowW * 2.0f - gap) * 0.5f;
@@ -1731,7 +1782,7 @@ public:
         FillAdaptiveBox(breadcrumbPopoverRect, theme, ColorHex(0x13131A), ColorHex(0x2C2C3C), 4.0f, false);
 
         if (siblings.empty()) {
-            DrawText(L"(Nenhuma pasta encontrada)", popX + 12.0f, popY + 10.0f, ColorHex(0x78788C), pUIFormatSmall);
+            DrawText(I18n::Tr(L"(Nenhuma pasta encontrada)", L"(No folders found)", L"(No se encontraron carpetas)"), popX + 12.0f, popY + 10.0f, ColorHex(0x78788C), pUIFormatSmall);
             return;
         }
 
@@ -1985,9 +2036,12 @@ public:
             itemY += itemH + 2.0f;
         }
 
-        bool ptbr = (language == "pt-BR");
+        (void)language;
         if (filtered.empty()) {
-            std::wstring emptyMsg = ptbr ? L"Nenhum comando registrado no historico." : L"No commands recorded in history.";
+            std::wstring emptyMsg = I18n::Tr(
+                L"Nenhum comando registrado no historico.",
+                L"No commands recorded in history.",
+                L"No hay comandos registrados en el historial.");
             DrawText(emptyMsg, mx + 24.0f, my + 70.0f, ColorHex(0x78788C), pUIFormatSmall);
         }
 
@@ -2021,9 +2075,9 @@ public:
             footCurX += (pillW + 8.0f);
         };
 
-        DrawTimelinePill(timelineFooterRunRect, { L"Enter" }, ptbr ? L"Executar" : L"Run");
-        DrawTimelinePill(timelineFooterTabRect, { L"Tab" }, ptbr ? L"Alternar Filtro" : L"Toggle Filter");
-        DrawTimelinePill(timelineFooterEscRect, { L"Esc" }, ptbr ? L"Fechar" : L"Close");
+        DrawTimelinePill(timelineFooterRunRect, { L"Enter" }, I18n::Tr(L"Executar", L"Run", L"Ejecutar"));
+        DrawTimelinePill(timelineFooterTabRect, { L"Tab" }, I18n::Tr(L"Alternar Filtro", L"Toggle Filter", L"Alternar Filtro"));
+        DrawTimelinePill(timelineFooterEscRect, { L"Esc" }, I18n::Tr(L"Fechar", L"Close", L"Cerrar"));
     }
 
     void RenderEdgePulse(float width, float height, float progress, bool isSuccess) {
@@ -2805,33 +2859,35 @@ public:
 
     void RenderProfileMenu(const Theme& theme, POINT mousePos, float menuX) {
         float mx = menuX;
+        float mw = 250.0f;
         if (pRenderTarget) {
             D2D1_SIZE_F sz = pRenderTarget->GetSize();
-            if (mx + 230.0f > sz.width - 10.0f) {
-                mx = (std::max)(6.0f, sz.width - 230.0f - 10.0f);
+            if (mx + mw > sz.width - 10.0f) {
+                mx = (std::max)(6.0f, sz.width - mw - 10.0f);
             }
         }
         float my = TITLEBAR_HEIGHT + 4.0f;
-        float mw = 230.0f;
         float itemH = 30.0f;
 
         struct ProfileItemDef {
             int id;
-            wchar_t glyph;
             std::wstring label;
             std::wstring shortcut;
+            std::string iconName;
             bool dividerAfter;
         };
 
         std::vector<ProfileItemDef> items = {
-            { 1, 0xE756, I18n::Get(StringId::ProfileMenu_PowerShell), L"Ctrl+T", false },
-            { 2, 0xE756, I18n::Get(StringId::ProfileMenu_Cmd), L"Ctrl+Shift+T", false },
-            { 3, 0xE7EF, I18n::Get(StringId::ProfileMenu_Admin), L"", true },
-            { 4, 0xE745, I18n::Get(StringId::ProfileMenu_SplitRight), L"Alt+Shift+D", false },
-            { 5, 0xE74B, I18n::Get(StringId::ProfileMenu_SplitDown), L"Alt+Shift+V", false }
+            { 1, I18n::Get(StringId::Launcher_FileExplorer), L"Ctrl+E", "folder_16.png", true },
+            { 2, L"PowerShell", L"pw", "pw_bolt_16.png", false },
+            { 3, I18n::Get(StringId::Launcher_PowerShellAdmin), L"UAC", "shield_16.png", false },
+            { 4, L"Command Prompt", L"cmd", "cmd_prompt_16.png", false },
+            { 5, I18n::Get(StringId::Launcher_CmdAdmin), L"UAC", "shield_16.png", true },
+            { 6, I18n::Get(StringId::ProfileMenu_SplitRight), L"Alt+Shift+D", "layers_16.png", false },
+            { 7, I18n::Get(StringId::ProfileMenu_SplitDown), L"Alt+Shift+S", "layers_16.png", false }
         };
 
-        int dividerCount = 1;
+        int dividerCount = 2;
         float mh = items.size() * itemH + dividerCount * 9.0f + 12.0f;
         profileMenuRect = D2D1::RectF(mx, my, mx + mw, my + mh);
 
@@ -2856,11 +2912,10 @@ public:
                 pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(itRect, 5.0f, 5.0f), pSolidBrush);
             }
 
-            D2D1_RECT_F icRect = D2D1::RectF(mx + 10.0f, curY + 5.0f, mx + 30.0f, curY + 25.0f);
-            D2D1_COLOR_F icCol = (item.id == 1) ? ColorHex(0x58B8FF) : (item.id == 2 ? ColorHex(0xFFB454) : (hov ? theme.accent : ColorHex(0x9090A0)));
-            DrawFluentIcon(item.glyph, icRect, icCol, pIconFormatSmall);
+            D2D1_RECT_F icRect = D2D1::RectF(mx + 10.0f, curY + 5.0f, mx + 28.0f, curY + 25.0f);
+            SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, item.iconName, icRect, 16.0f, 16.0f);
 
-            DrawText(item.label, mx + 34.0f, curY + 6.0f, ColorHex(0xF0F0FF), pUIFormat);
+            DrawText(item.label, mx + 34.0f, curY + 6.0f, hov ? theme.accent : ColorHex(0xF0F0FF), pUIFormat);
 
             if (!item.shortcut.empty()) {
                 float scW = MeasureStringWidth(item.shortcut, pUIFormatSmall);
@@ -2890,9 +2945,9 @@ public:
 
         std::vector<GitAction> actions = {
             { 1, L"Git Push (Auto-Upstream)", L"push -u origin <branch>" },
-            { 2, L"Git Pull --rebase", L"sincroniza com remoto" },
-            { 3, L"Git Status Detalhado", L"gstatus instantâneo" },
-            { 4, L"Git Log (Últimos Commits)", L"glog árvore de commits" }
+            { 2, L"Git Pull --rebase", I18n::Tr(L"sincroniza com remoto", L"sync with remote", L"sincroniza con remoto") },
+            { 3, I18n::Tr(L"Git Status Detalhado", L"Detailed Git Status", L"Git Status Detallado"), I18n::Tr(L"gstatus instantaneo", L"instant gstatus", L"gstatus instantaneo") },
+            { 4, I18n::Tr(L"Git Log (Ultimos Commits)", L"Git Log (Recent Commits)", L"Git Log (Ultimos Commits)"), I18n::Tr(L"glog arvore de commits", L"glog commit tree", L"glog arbol de commits") }
         };
 
         float gh = (actions.size() + 1 + gitInfo.localBranches.size()) * itemH + 24.0f;
@@ -2941,7 +2996,7 @@ public:
         pRenderTarget->DrawLine(D2D1::Point2F(gx + 10.0f, curY + 4.0f), D2D1::Point2F(gx + gw - 10.0f, curY + 4.0f), pSolidBrush, 1.0f);
         curY += 8.0f;
 
-        DrawText(L"Branches Locais:", gx + 12.0f, curY, ColorHex(0x78788C), pUIFormatSmall);
+        DrawText(I18n::Tr(L"Branches Locais:", L"Local Branches:", L"Ramas Locales:"), gx + 12.0f, curY, ColorHex(0x78788C), pUIFormatSmall);
         curY += 20.0f;
 
         for (const auto& br : gitInfo.localBranches) {
@@ -2983,7 +3038,7 @@ public:
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(filterBox, 6.0f, 6.0f), pSolidBrush);
         pSolidBrush->SetColor(ColorHex(0x2A2A35));
         pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(filterBox, 6.0f, 6.0f), pSolidBrush, 1.0f);
-        DrawText(L"Snippets salvos", sx + 22.0f, sy + 17.5f, ColorHex(0x78788C), pUIFormatSmall);
+        DrawText(I18n::Tr(L"Snippets salvos", L"Saved snippets", L"Snippets guardados"), sx + 22.0f, sy + 17.5f, ColorHex(0x78788C), pUIFormatSmall);
 
         // Add button [+] (26x26px, \uE710 Add)
         D2D1_RECT_F addR = D2D1::RectF(sx + sw - 38.0f, sy + 14.0f, sx + sw - 12.0f, sy + 40.0f);
@@ -3062,14 +3117,17 @@ public:
 
         std::vector<WorkfolderItem> filteredItems = WorkfolderScanner::FuzzyFilter(items, filterQuery);
 
-        bool ptbr = (language == "pt-BR");
-        std::wstring placeholder = ptbr ? L"Telescope: Digite para buscar arquivos..." : L"Telescope: Type to search files...";
+        (void)language;
+        std::wstring placeholder = I18n::Tr(
+            L"Telescope: Digite para buscar arquivos...",
+            L"Telescope: Type to search files...",
+            L"Telescope: Escribe para buscar archivos...");
         std::wstring searchPlaceholder = filterQuery.empty() ? placeholder : filterQuery;
         DrawText(searchPlaceholder, px + 40.0f, py + 12.0f, filterQuery.empty() ? ColorHex(0x606078) : ColorHex(0xF0F0FF), pUIFormatBold);
 
         // Item count badge
         wchar_t cntBuf[48];
-        swprintf_s(cntBuf, ptbr ? L"[%zu itens]" : L"[%zu items]", filteredItems.size());
+        swprintf_s(cntBuf, I18n::Tr(L"[%zu itens]", L"[%zu items]", L"[%zu elementos]"), filteredItems.size());
         float cntW = MeasureStringWidth(cntBuf, pUIFormatSmall);
         DrawText(cntBuf, px + pw - cntW - 48.0f, py + 13.0f, ColorHex(0x78788C), pUIFormatSmall);
 
@@ -3152,7 +3210,7 @@ public:
             const auto& sel = filteredItems[selectedIndex];
 
             DrawText(sel.name, rightX, contentY + 8.0f, theme.accent, pUIFormatBold);
-            std::wstring metaInfo = sel.isDirectory ? L"Pasta de Diretório" : (sel.extension + L"  |  " + sel.formattedSize);
+            std::wstring metaInfo = sel.isDirectory ? I18n::Tr(L"Pasta de Diretorio", L"Directory Folder", L"Carpeta de Directorio") : (sel.extension + L"  |  " + sel.formattedSize);
             DrawText(metaInfo, rightX, contentY + 28.0f, ColorHex(0x78788C), pUIFormatSmall);
 
             pSolidBrush->SetColor(ColorHex(0x222230));
@@ -3165,24 +3223,24 @@ public:
                 D2D1_RECT_F hdR = D2D1::RectF(rightX, prevY, rightX + 64.0f, prevY + 64.0f);
                 SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, "hard_disk.png", hdR, 48.0f, 48.0f);
 
-                DrawText(ptbr ? L"Unidade de Disco Local" : L"Local Disk Drive", rightX + 74.0f, prevY + 4.0f, ColorHex(0x00FFBF), pUIFormatBold);
-                DrawText(ptbr ? L"Dispositivo de Armazenamento Windows" : L"Windows Storage Device", rightX + 74.0f, prevY + 24.0f, ColorHex(0xF0F0FF), pUIFormatSmall);
-                DrawText(ptbr ? L"Pressione Enter para navegar nesta unidade" : L"Press Enter to open this drive", rightX + 74.0f, prevY + 42.0f, ColorHex(0x78788C), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Unidade de Disco Local", L"Local Disk Drive", L"Unidad de Disco Local"), rightX + 74.0f, prevY + 4.0f, ColorHex(0x00FFBF), pUIFormatBold);
+                DrawText(I18n::Tr(L"Dispositivo de Armazenamento Windows", L"Windows Storage Device", L"Dispositivo de Almacenamiento Windows"), rightX + 74.0f, prevY + 24.0f, ColorHex(0xF0F0FF), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Pressione Enter para navegar nesta unidade", L"Press Enter to open this drive", L"Presiona Enter para abrir esta unidad"), rightX + 74.0f, prevY + 42.0f, ColorHex(0x78788C), pUIFormatSmall);
 
                 prevY += 76.0f;
-                DrawText(ptbr ? L"Ponto de Montagem:" : L"Mount Point:", rightX, prevY, ColorHex(0x606078), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Ponto de Montagem:", L"Mount Point:", L"Punto de Montaje:"), rightX, prevY, ColorHex(0x606078), pUIFormatSmall);
                 DrawText(sel.fullPath, rightX, prevY + 18.0f, ColorHex(0xA0A0B8), pTermFormatSmall);
             } else if (sel.extension == L".exe" || sel.extension == L".dll") {
                 // PE64 Inspector Card
                 D2D1_RECT_F peChipR = D2D1::RectF(rightX, prevY, rightX + 64.0f, prevY + 64.0f);
                 SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, SpriteId::GreenChipClean, peChipR, 56.0f, 56.0f);
 
-                DrawText(L"Formato: Executável Nativo PE32+ (PE64)", rightX + 74.0f, prevY + 4.0f, ColorHex(0x00FFBF), pUIFormatBold);
-                DrawText(L"Arquitetura: x86_64 (64-bit Windows Binary)", rightX + 74.0f, prevY + 24.0f, ColorHex(0xF0F0FF), pUIFormatSmall);
-                DrawText(L"Subsystem: Windows GUI / Console", rightX + 74.0f, prevY + 42.0f, ColorHex(0x78788C), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Formato: Executavel Nativo PE32+ (PE64)", L"Format: Native Executable PE32+ (PE64)", L"Formato: Ejecutable Nativo PE32+ (PE64)"), rightX + 74.0f, prevY + 4.0f, ColorHex(0x00FFBF), pUIFormatBold);
+                DrawText(I18n::Tr(L"Arquitetura: x86_64 (64-bit Windows Binary)", L"Architecture: x86_64 (64-bit Windows Binary)", L"Arquitectura: x86_64 (Binario Windows de 64 bits)"), rightX + 74.0f, prevY + 24.0f, ColorHex(0xF0F0FF), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Subsistema: Windows GUI / Console", L"Subsystem: Windows GUI / Console", L"Subsistema: Windows GUI / Consola"), rightX + 74.0f, prevY + 42.0f, ColorHex(0x78788C), pUIFormatSmall);
 
                 prevY += 76.0f;
-                DrawText(L"Caminho Completo:", rightX, prevY, ColorHex(0x606078), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Caminho Completo:", L"Full Path:", L"Ruta Completa:"), rightX, prevY, ColorHex(0x606078), pUIFormatSmall);
                 DrawText(sel.fullPath, rightX, prevY + 18.0f, ColorHex(0xA0A0B8), pTermFormatSmall);
             } else if (sel.extension == L".png" || sel.extension == L".jpg" || sel.extension == L".jpeg" || sel.extension == L".ico" || sel.extension == L".bmp") {
                 // Image preview via WIC SpriteAtlas
@@ -3191,9 +3249,9 @@ public:
                 if (bmp) {
                     D2D1_SIZE_F bsz = bmp->GetSize();
                     wchar_t dimBuf[64];
-                    swprintf_s(dimBuf, L"Dimensões: %.0f x %.0f px", bsz.width, bsz.height);
+                    swprintf_s(dimBuf, I18n::Tr(L"Dimensoes: %.0f x %.0f px", L"Dimensions: %.0f x %.0f px", L"Dimensiones: %.0f x %.0f px"), bsz.width, bsz.height);
                     DrawText(dimBuf, rightX, prevY, ColorHex(0x00FFBF), pUIFormatBold);
-                    DrawText(L"Formato: Imagem Bitmap (WIC Decoded)", rightX, prevY + 20.0f, ColorHex(0x78788C), pUIFormatSmall);
+                    DrawText(I18n::Tr(L"Formato: Imagem Bitmap (WIC Decoded)", L"Format: Bitmap Image (WIC Decoded)", L"Formato: Imagen Bitmap (WIC Decoded)"), rightX, prevY + 20.0f, ColorHex(0x78788C), pUIFormatSmall);
 
                     float maxThumbW = rightW - 20.0f;
                     float maxThumbH = contentH - 80.0f;
@@ -3206,7 +3264,7 @@ public:
                     pSolidBrush->SetColor(ColorHex(0x34344A));
                     pRenderTarget->DrawRectangle(thumbR, pSolidBrush, 1.0f);
                 } else {
-                    DrawText(L"Visualização de imagem não disponível", rightX, prevY, ColorHex(0x78788C), pUIFormatSmall);
+                    DrawText(I18n::Tr(L"Visualizacao de imagem nao disponivel", L"Image preview not available", L"Vista previa de imagen no disponible"), rightX, prevY, ColorHex(0x78788C), pUIFormatSmall);
                 }
             } else if (!sel.previewLines.empty()) {
                 // Multi-token Syntax preview (up to 24 lines)
@@ -3261,9 +3319,9 @@ public:
                     prevY += 16.0f;
                 }
             } else if (sel.isDirectory) {
-                DrawText(ptbr ? L"Pressione Enter para navegar nesta pasta." : L"Press Enter to navigate this folder.", rightX, prevY + 10.0f, ColorHex(0x78788C), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Pressione Enter para navegar nesta pasta.", L"Press Enter to navigate this folder.", L"Presiona Enter para navegar esta carpeta."), rightX, prevY + 10.0f, ColorHex(0x78788C), pUIFormatSmall);
             } else {
-                DrawText(ptbr ? L"Arquivo binario ou vazio sem pre-visualizacao de texto." : L"Binary or empty file without text preview.", rightX, prevY + 10.0f, ColorHex(0x78788C), pUIFormatSmall);
+                DrawText(I18n::Tr(L"Arquivo binario ou vazio sem pre-visualizacao de texto.", L"Binary or empty file without text preview.", L"Archivo binario o vacio sin vista previa de texto."), rightX, prevY + 10.0f, ColorHex(0x78788C), pUIFormatSmall);
             }
         }
 
@@ -3298,10 +3356,10 @@ public:
             footCurX += (pillW + 8.0f);
         };
 
-        DrawFooterPill(workfolderRunBtnRect, { L"Enter" }, ptbr ? L"Executar / Abrir" : L"Execute / Open");
-        DrawFooterPill(workfolderTabBtnRect, { L"Tab" }, ptbr ? L"Inserir no Prompt" : L"Insert to Prompt");
+        DrawFooterPill(workfolderRunBtnRect, { L"Enter" }, I18n::Tr(L"Executar / Abrir", L"Execute / Open", L"Ejecutar / Abrir"));
+        DrawFooterPill(workfolderTabBtnRect, { L"Tab" }, I18n::Tr(L"Inserir no Prompt", L"Insert to Prompt", L"Insertar en el Prompt"));
         DrawFooterPill(workfolderExplorerBtnRect, { L"Ctrl", L"E" }, L"Explorer");
-        DrawFooterPill(workfolderFooterEscRect, { L"Esc" }, ptbr ? L"Fechar" : L"Close");
+        DrawFooterPill(workfolderFooterEscRect, { L"Esc" }, I18n::Tr(L"Fechar", L"Close", L"Cerrar"));
     }
 
     void RenderWorkspaceSidebar(
@@ -3315,7 +3373,7 @@ public:
         if (!pRenderTarget || w <= 0.0f) return;
         workspaceSidebarRect = D2D1::RectF(x, y, x + w, y + h);
 
-        bool ptbr = (language == "pt-BR");
+        (void)language;
 
         // Sidebar Background (#121218)
         pSolidBrush->SetColor(ColorHex(0x121218));
@@ -3331,7 +3389,7 @@ public:
         pSolidBrush->SetColor(ColorHex(0x161620));
         pRenderTarget->FillRectangle(hdrRect, pSolidBrush);
 
-        // Collapse button [◀] on top-right of sidebar header
+        // Collapse button on top-right of sidebar header
         sidebarCollapseBtnRect = D2D1::RectF(x + w - 28.0f, y + 5.0f, x + w - 6.0f, y + headerH - 5.0f);
         bool colHov = PtInD2D1Rect(sidebarCollapseBtnRect, mousePos);
         pSolidBrush->SetColor(colHov ? ColorHex(0x282838) : ColorHex(0x181824));
@@ -3350,7 +3408,7 @@ public:
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(workspaceFilesTabRect, 4.0f, 4.0f), pSolidBrush);
         D2D1_RECT_F fIconR = D2D1::RectF(workspaceFilesTabRect.left + 4.0f, workspaceFilesTabRect.top + 2.0f, workspaceFilesTabRect.left + 20.0f, workspaceFilesTabRect.bottom - 2.0f);
         SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, "folder_16.png", fIconR, 14.0f, 14.0f);
-        DrawText(ptbr ? L"Arquivos" : L"Files", workspaceFilesTabRect.left + 22.0f, workspaceFilesTabRect.top + 4.0f, fActive ? theme.accent : ColorHex(0xCCCCCC), pUIFormatSmall);
+        DrawText(I18n::Tr(L"Arquivos", L"Files", L"Archivos"), workspaceFilesTabRect.left + 22.0f, workspaceFilesTabRect.top + 4.0f, fActive ? theme.accent : ColorHex(0xCCCCCC), pUIFormatSmall);
 
         // Tab 2: [Git]
         workspaceGitTabRect = D2D1::RectF(x + 8.0f + tabW, y + 4.0f, x + 8.0f + 2.0f * tabW, y + headerH - 4.0f);
@@ -3402,7 +3460,7 @@ public:
                 D2D1_RECT_F upIcR = D2D1::RectF(x + 8.0f, itemY + 2.0f, x + 24.0f, itemY + itemH - 2.0f);
                 SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, "folder_up.png", upIcR, 14.0f, 14.0f);
 
-                std::wstring upText = ptbr ? L".. (Subir nivel)" : L".. (Parent folder)";
+                std::wstring upText = I18n::Tr(L".. (Subir nivel)", L".. (Parent folder)", L".. (Subir nivel)");
                 DrawText(upText, x + 28.0f, itemY + 3.0f, upHov ? ColorHex(0xFFFFFF) : ColorHex(0xA0A0B0), pUIFormatSmall);
                 itemY += itemH;
             } else {
@@ -3500,7 +3558,7 @@ public:
             }
         } else {
             // [Git] Tab
-            DrawText(ptbr ? L"BRANCH ATIVA" : L"ACTIVE BRANCH", x + 10.0f, itemY, ColorHex(0x78788C), pUIFormatSmall);
+            DrawText(I18n::Tr(L"BRANCH ATIVA", L"ACTIVE BRANCH", L"RAMA ACTIVA"), x + 10.0f, itemY, ColorHex(0x78788C), pUIFormatSmall);
             itemY += 18.0f;
 
             D2D1_RECT_F bR = D2D1::RectF(x + 8.0f, itemY, x + w - 8.0f, itemY + 28.0f);
@@ -3515,18 +3573,18 @@ public:
             DrawText(branch, bR.left + 26.0f, bR.top + 5.0f, theme.accent, pUIFormatBold);
             itemY += 36.0f;
 
-            DrawText(ptbr ? L"ULTIMO COMMIT" : L"LAST COMMIT", x + 10.0f, itemY, ColorHex(0x78788C), pUIFormatSmall);
+            DrawText(I18n::Tr(L"ULTIMO COMMIT", L"LAST COMMIT", L"ULTIMO COMMIT"), x + 10.0f, itemY, ColorHex(0x78788C), pUIFormatSmall);
             itemY += 18.0f;
             std::wstring cHash = gitInfo.commitHashShort.empty() ? L"---" : gitInfo.commitHashShort;
             DrawText(cHash, x + 10.0f, itemY, ColorHex(0xCCCCCC), pUIFormat);
             itemY += 28.0f;
 
-            DrawText(ptbr ? L"ESTADO" : L"STATUS", x + 10.0f, itemY, ColorHex(0x78788C), pUIFormatSmall);
+            DrawText(I18n::Tr(L"ESTADO", L"STATUS", L"ESTADO"), x + 10.0f, itemY, ColorHex(0x78788C), pUIFormatSmall);
             itemY += 18.0f;
             if (gitInfo.isDirty) {
-                DrawText(ptbr ? L"Modificacoes pendentes" : L"Pending changes", x + 10.0f, itemY, ColorHex(0xF59E0B), pUIFormatBold);
+                DrawText(I18n::Tr(L"Modificacoes pendentes", L"Pending changes", L"Cambios pendientes"), x + 10.0f, itemY, ColorHex(0xF59E0B), pUIFormatBold);
             } else {
-                DrawText(ptbr ? L"Working tree limpa" : L"Clean working tree", x + 10.0f, itemY, ColorHex(0x10B981), pUIFormatBold);
+                DrawText(I18n::Tr(L"Working tree limpa", L"Clean working tree", L"Working tree limpia"), x + 10.0f, itemY, ColorHex(0x10B981), pUIFormatBold);
             }
         }
     }
@@ -3543,7 +3601,7 @@ public:
         if (!pRenderTarget || pw <= 0.0f || ph <= 0.0f) return;
         D2D1_RECT_F bodyR = D2D1::RectF(px, py, px + pw, py + ph);
 
-        bool ptbr = (language == "pt-BR");
+        (void)language;
 
         // Editor Body Background (#14141C)
         pSolidBrush->SetColor(ColorHex(0x14141C));
@@ -3559,8 +3617,8 @@ public:
 
         // File path indicator + dirty badge
         std::wstring barTxt = tab.editorFilePath;
-        if (tab.isDirty) barTxt += ptbr ? L" * [Modificado - Ctrl+S para salvar]" : L" * [Modified - Ctrl+S to save]";
-        else barTxt += ptbr ? L" [Salvo]" : L" [Saved]";
+        if (tab.isDirty) barTxt += I18n::Tr(L" * [Modificado - Ctrl+S para salvar]", L" * [Modified - Ctrl+S to save]", L" * [Modificado - Ctrl+S para guardar]");
+        else barTxt += I18n::Tr(L" [Salvo]", L" [Saved]", L" [Guardado]");
         DrawText(barTxt, px + 12.0f, py + 5.0f, tab.isDirty ? ColorHex(0xF59E0B) : ColorHex(0x8E8E9E), pUIFormatSmall);
 
         // Save Button on the right
@@ -3570,7 +3628,7 @@ public:
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(editorSaveBtnRect, 3.0f, 3.0f), pSolidBrush);
         pSolidBrush->SetColor(tab.isDirty ? theme.accent : ColorHex(0x38384A));
         pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(editorSaveBtnRect, 3.0f, 3.0f), pSolidBrush, 1.0f);
-        std::wstring saveLabel = ptbr ? L"Salvar" : L"Save";
+        std::wstring saveLabel = I18n::Tr(L"Salvar", L"Save", L"Guardar");
         DrawText(saveLabel, editorSaveBtnRect.left + 16.0f, py + 4.5f, tab.isDirty ? theme.accent : ColorHex(0xA0A0B0), pUIFormatSmall);
 
         float contentY = py + barH;
@@ -4170,7 +4228,7 @@ public:
 
         // Row 13: Ver introducao novamente
         DrawText(I18n::Get(StringId::Settings_ViewIntro), mx + 24.0f, rowY + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
-        DrawText(ptbr ? L"Rever o passo a passo de apresentacao do Spet@term" : L"Review the Spet@term onboarding walkthrough", mx + 24.0f, rowY + 26.0f, ColorHex(0x78788C), pUIFormatSmall);
+        DrawText(I18n::Tr(L"Rever o passo a passo de apresentacao do Spet@term", L"Review the Spet@term onboarding walkthrough", L"Revisar el recorrido inicial de Spet@term"), mx + 24.0f, rowY + 26.0f, ColorHex(0x78788C), pUIFormatSmall);
         settingsViewIntroBtnRect = D2D1::RectF(ctrlLeft, rowY + 10.0f, ctrlLeft + ctrlW, rowY + 10.0f + ctrlH);
         bool viHov = PtInD2D1Rect(settingsViewIntroBtnRect, mousePos);
         pSolidBrush->SetColor(viHov ? ColorHex(0x282838) : ColorHex(0x1C1C26));
@@ -4180,6 +4238,42 @@ public:
         std::wstring viTxt = I18n::Get(StringId::Settings_ViewIntro);
         float viW = MeasureStringWidth(viTxt, pUIFormatBold);
         DrawText(viTxt, settingsViewIntroBtnRect.left + (ctrlW - viW) * 0.5f, rowY + 16.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+
+        rowY += rowH;
+        DrawRowDivider(rowY);
+
+        // Row 14: Modo de Inicializacao (Startup Mode)
+        DrawText(I18n::Get(StringId::Explorer_StartupModeSetting), mx + 24.0f, rowY + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+        DrawText(I18n::Get(StringId::Explorer_StartupModeDesc), mx + 24.0f, rowY + 26.0f, ColorHex(0x78788C), pUIFormatSmall);
+
+        std::vector<SegmentOption> startupOpts = {
+            { L"launcher", L"Launcher" },
+            { L"explorer", L"Explorer" },
+            { L"pw", L"PowerShell" },
+            { L"cmd", L"CMD" }
+        };
+        std::vector<std::pair<D2D1_RECT_F, std::wstring>> rawStartupHit;
+        DrawSegmentedControl(ctrlLeft, rowY + 10.0f, ctrlW, ctrlH, startupOpts, Utf8ToWide(settings.defaultStartupMode), rawStartupHit, mousePos);
+        for (size_t i = 0; i < rawStartupHit.size() && i < 4; ++i) {
+            setStartupModeRects[i] = rawStartupHit[i].first;
+        }
+
+        rowY += rowH;
+        DrawRowDivider(rowY);
+
+        // Row 15: Barra de Tamanho de Pastas no Explorer (WizTree folder size analyzer)
+        DrawText(I18n::Get(StringId::Explorer_ShowFolderSizesSetting), mx + 24.0f, rowY + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+        DrawText(I18n::Get(StringId::Explorer_ShowFolderSizesDesc), mx + 24.0f, rowY + 26.0f, ColorHex(0x78788C), pUIFormatSmall);
+
+        std::vector<SegmentOption> sizeOpts = {
+            { L"0", I18n::Tr(L"Desativado (Rapido p/ HD)", L"Disabled (Fast for HDD)", L"Desactivado (Rapido para HD)") },
+            { L"1", I18n::Tr(L"Ativado (Visualizador)", L"Enabled (Visualizer)", L"Activado (Visualizador)") }
+        };
+        std::vector<std::pair<D2D1_RECT_F, std::wstring>> rawSizeHit;
+        DrawSegmentedControl(ctrlLeft, rowY + 10.0f, ctrlW, ctrlH, sizeOpts, settings.explorerShowFolderSizes ? L"1" : L"0", rawSizeHit, mousePos);
+        if (rawSizeHit.size() >= 2) {
+            setExpFolderSizeToggleRect = rawSizeHit[1].first;
+        }
 
         rowY += rowH + 20.0f;
         pRenderTarget->PopAxisAlignedClip();
@@ -5393,6 +5487,630 @@ public:
     static bool PtInD2D1Rect(const D2D1_RECT_F& r, POINT pt) {
         return (pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom);
     }
+
+    void RenderLauncherPane(TerminalPane& pane, float px, float py, float pw, float ph, const Theme& theme, bool isAdmin, POINT mousePos) {
+        if (!pRenderTarget || pw <= 0.0f || ph <= 0.0f) return;
+        D2D1_RECT_F bodyR = D2D1::RectF(px, py, px + pw, py + ph);
+
+        // Body Background (#0E0E14)
+        pSolidBrush->SetColor(ColorHex(0x0E0E14));
+        pRenderTarget->FillRectangle(bodyR, pSolidBrush);
+
+        float centerX = px + pw * 0.5f;
+        float startY = py + (std::max)(20.0f, ph * 0.10f);
+
+        // Title & Subtitle
+        std::wstring title = I18n::Get(StringId::Launcher_Title);
+        float tw = MeasureStringWidth(title, pUIFormatBold);
+        DrawText(title, centerX - tw * 0.5f, startY, theme.accent, pUIFormatBold, true);
+
+        std::wstring sub = I18n::Get(StringId::Launcher_Subtitle);
+        float sw = MeasureStringWidth(sub, pUIFormatSmall);
+        DrawText(sub, centerX - sw * 0.5f, startY + 28.0f, ColorHex(0x8E8E9E), pUIFormatSmall);
+
+        struct LauncherCardDef {
+            int id;
+            std::wstring keyBadge;
+            std::wstring title;
+            std::wstring desc;
+            std::string iconName;
+            bool adminBadge;
+        };
+
+        std::vector<LauncherCardDef> cards = {
+            { 0, L"[ 1 ]", I18n::Get(StringId::Launcher_FileExplorer), I18n::Get(StringId::Launcher_FileExplorerDesc), "folder_16.png", false },
+            { 1, L"[ 2 ]", I18n::Get(StringId::Launcher_PowerShell), I18n::Get(StringId::Launcher_PowerShellDesc), "pw_bolt_16.png", false },
+            { 2, L"[ 3 ]", I18n::Get(StringId::Launcher_PowerShellAdmin), I18n::Get(StringId::Launcher_PowerShellAdminDesc), "shield_16.png", true },
+            { 3, L"[ 4 ]", I18n::Get(StringId::Launcher_Cmd), I18n::Get(StringId::Launcher_CmdDesc), "cmd_prompt_16.png", false },
+            { 4, L"[ 5 ]", I18n::Get(StringId::Launcher_CmdAdmin), I18n::Get(StringId::Launcher_CmdAdminDesc), "shield_16.png", true }
+        };
+
+        float cardW = (std::min)(540.0f, pw - 48.0f);
+        float cardH = 58.0f;
+        float cardGap = 10.0f;
+        float cardLeft = centerX - cardW * 0.5f;
+        float curCardY = startY + 64.0f;
+
+        pane.hoveredLauncherCard = -1;
+        for (size_t i = 0; i < cards.size() && i < 5; ++i) {
+            D2D1_RECT_F cr = D2D1::RectF(cardLeft, curCardY, cardLeft + cardW, curCardY + cardH);
+            pane.launcherCardRects[i] = cr;
+
+            bool hov = PtInD2D1Rect(cr, mousePos);
+            if (hov) pane.hoveredLauncherCard = static_cast<int>(i);
+            bool isSel = (pane.selectedLauncherCard == static_cast<int>(i));
+
+            pSolidBrush->SetColor(hov ? ColorHex(0x1E1E2C) : (isSel ? ColorHex(0x181824) : ColorHex(0x14141E)));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(cr, 6.0f, 6.0f), pSolidBrush);
+
+            pSolidBrush->SetColor(hov ? theme.accent : (isSel ? ColorHex(0x3E3E56) : ColorHex(0x242434)));
+            pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(cr, 6.0f, 6.0f), pSolidBrush, (hov || isSel) ? 1.5f : 1.0f);
+
+            D2D1_RECT_F icR = D2D1::RectF(cardLeft + 14.0f, curCardY + (cardH - 24.0f) * 0.5f, cardLeft + 38.0f, curCardY + (cardH + 24.0f) * 0.5f);
+            SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, cards[i].iconName, icR, 18.0f, 18.0f);
+
+            DrawText(cards[i].title, cardLeft + 48.0f, curCardY + 10.0f, hov ? theme.accent : ColorHex(0xF0F0FF), pUIFormatBold);
+            DrawText(cards[i].desc, cardLeft + 48.0f, curCardY + 31.0f, ColorHex(0x8A8A9E), pUIFormatSmall);
+
+            float kw = MeasureStringWidth(cards[i].keyBadge, pUIFormatBold);
+            D2D1_RECT_F badgeR = D2D1::RectF(cardLeft + cardW - kw - 24.0f, curCardY + (cardH - 22.0f) * 0.5f, cardLeft + cardW - 12.0f, curCardY + (cardH + 22.0f) * 0.5f);
+            pSolidBrush->SetColor(ColorHex(0x101018));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(badgeR, 4.0f, 4.0f), pSolidBrush);
+            pSolidBrush->SetColor(hov ? theme.accent : ColorHex(0x323246));
+            pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(badgeR, 4.0f, 4.0f), pSolidBrush, 1.0f);
+            DrawText(cards[i].keyBadge, badgeR.left + 6.0f, badgeR.top + 3.0f, hov ? theme.accent : ColorHex(0xA0A0B8), pUIFormatSmall);
+
+            curCardY += cardH + cardGap;
+        }
+
+        std::wstring hint = I18n::Tr(L"Pressione 1-5 ou use as setas para selecionar, Enter para iniciar",
+                                     L"Press 1-5 or use arrow keys to select, Enter to launch",
+                                     L"Presiona 1-5 o usa las flechas para seleccionar, Enter para iniciar");
+        float hw = MeasureStringWidth(hint, pUIFormatSmall);
+        DrawText(hint, centerX - hw * 0.5f, curCardY + 12.0f, ColorHex(0x565668), pUIFormatSmall);
+    }
+
+    void RenderFileExplorerPane(TerminalPane& pane, float px, float py, float pw, float ph,
+                                const Theme& theme, const AppSettings& settings,
+                                SpetaAudioPlayer& audioPlayer,
+                                const std::vector<FileTransferProgressSnapshot>& transferSnapshots,
+                                bool isSplitView, POINT mousePos) {
+        if (!pRenderTarget || pw <= 0.0f || ph <= 0.0f) return;
+
+        // Background
+        D2D1_RECT_F fullRect = D2D1::RectF(px, py, px + pw, py + ph);
+        pSolidBrush->SetColor(ColorHex(0x101016));
+        pRenderTarget->FillRectangle(fullRect, pSolidBrush);
+
+        float topNavH = 32.0f;
+        float driveStripH = 26.0f;
+        float transferBarH = (!transferSnapshots.empty()) ? 26.0f : 0.0f;
+        float bodyH = ph - topNavH - driveStripH - transferBarH;
+        if (bodyH < 50.0f) bodyH = 50.0f;
+
+        // ====================================================================
+        // 1. TOP NAVIGATION BAR (Back, Up, Refresh, Breadcrumb, Search)
+        // ====================================================================
+        D2D1_RECT_F topNavR = D2D1::RectF(px, py, px + pw, py + topNavH);
+        pSolidBrush->SetColor(ColorHex(0x161620));
+        pRenderTarget->FillRectangle(topNavR, pSolidBrush);
+        pSolidBrush->SetColor(ColorHex(0x222230));
+        pRenderTarget->DrawLine(D2D1::Point2F(px, py + topNavH), D2D1::Point2F(px + pw, py + topNavH), pSolidBrush, 1.0f);
+
+        float curX = px + 8.0f;
+        float btnY = py + 4.0f;
+        float btnH = 24.0f;
+
+        // Back Button
+        pane.expBackBtnRect = D2D1::RectF(curX, btnY, curX + 26.0f, btnY + btnH);
+        bool backHov = PtInD2D1Rect(pane.expBackBtnRect, mousePos);
+        pSolidBrush->SetColor(backHov ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expBackBtnRect, 4.0f, 4.0f), pSolidBrush);
+        pSolidBrush->SetColor(ColorHex(0x323246));
+        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expBackBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
+        DrawText(L"<", pane.expBackBtnRect.left + 9.0f, btnY + 3.0f, backHov ? theme.accent : ColorHex(0xCCCCCC), pUIFormatBold);
+        curX += 30.0f;
+
+        // Up Button
+        pane.expUpBtnRect = D2D1::RectF(curX, btnY, curX + 26.0f, btnY + btnH);
+        bool upHov = PtInD2D1Rect(pane.expUpBtnRect, mousePos);
+        pSolidBrush->SetColor(upHov ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expUpBtnRect, 4.0f, 4.0f), pSolidBrush);
+        pSolidBrush->SetColor(ColorHex(0x323246));
+        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expUpBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
+        DrawText(L"^", pane.expUpBtnRect.left + 9.0f, btnY + 3.0f, upHov ? theme.accent : ColorHex(0xCCCCCC), pUIFormatBold);
+        curX += 30.0f;
+
+        // Refresh Button
+        pane.expRefreshBtnRect = D2D1::RectF(curX, btnY, curX + 26.0f, btnY + btnH);
+        bool refHov = PtInD2D1Rect(pane.expRefreshBtnRect, mousePos);
+        pSolidBrush->SetColor(refHov ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expRefreshBtnRect, 4.0f, 4.0f), pSolidBrush);
+        pSolidBrush->SetColor(ColorHex(0x323246));
+        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expRefreshBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
+        DrawText(L"R", pane.expRefreshBtnRect.left + 8.0f, btnY + 3.0f, refHov ? theme.accent : ColorHex(0xCCCCCC), pUIFormatSmall);
+        curX += 36.0f;
+
+        // Search Box (Right side)
+        float searchW = (std::min)(220.0f, (std::max)(120.0f, pw * 0.25f));
+        float searchX = px + pw - searchW - 8.0f;
+        pane.expSearchBoxRect = D2D1::RectF(searchX, btnY, searchX + searchW - 32.0f, btnY + btnH);
+        pane.expSearchModeBtnRect = D2D1::RectF(searchX + searchW - 28.0f, btnY, searchX + searchW, btnY + btnH);
+
+        // Search Input Card
+        bool sHov = PtInD2D1Rect(pane.expSearchBoxRect, mousePos) || pane.expSearchFocused;
+        pSolidBrush->SetColor(sHov ? ColorHex(0x1C1C28) : ColorHex(0x14141E));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expSearchBoxRect, 4.0f, 4.0f), pSolidBrush);
+        pSolidBrush->SetColor(pane.expSearchFocused ? theme.accent : (sHov ? ColorHex(0x404058) : ColorHex(0x2A2A3A)));
+        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expSearchBoxRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
+
+        std::wstring sDisp = pane.explorer.filterQuery.empty() ? I18n::Get(StringId::Explorer_SearchPlaceholder) : pane.explorer.filterQuery;
+        DrawText(sDisp, pane.expSearchBoxRect.left + 8.0f, btnY + 4.0f, pane.explorer.filterQuery.empty() ? ColorHex(0x606078) : ColorHex(0xF0F0FF), pUIFormatSmall);
+
+        // Search Mode (HD/MFT vs Quick Filter)
+        bool smHov = PtInD2D1Rect(pane.expSearchModeBtnRect, mousePos);
+        pSolidBrush->SetColor(pane.explorer.recursiveSearchMode ? ColorHex(0x1E3A2E) : (smHov ? ColorHex(0x28283C) : ColorHex(0x181822)));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expSearchModeBtnRect, 4.0f, 4.0f), pSolidBrush);
+        pSolidBrush->SetColor(pane.explorer.recursiveSearchMode ? ColorHex(0x4ADE80) : ColorHex(0x323246));
+        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expSearchModeBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
+        DrawText(pane.explorer.recursiveSearchMode ? L"MFT" : L"FLT", pane.expSearchModeBtnRect.left + 4.0f, btnY + 4.0f, pane.explorer.recursiveSearchMode ? ColorHex(0x4ADE80) : ColorHex(0x8A8A9E), pUIFormatSmall);
+
+        // Breadcrumbs in remaining middle space
+        float bcMaxRight = searchX - 10.0f;
+        for (size_t i = 0; i < pane.explorer.breadcrumbs.size(); ++i) {
+            auto& seg = pane.explorer.breadcrumbs[i];
+            float segW = MeasureStringWidth(seg.label, pUIFormatSmall) + 14.0f;
+            if (curX + segW > bcMaxRight) break;
+
+            seg.pillRect = D2D1::RectF(curX, btnY, curX + segW, btnY + btnH);
+            bool bHov = PtInD2D1Rect(seg.pillRect, mousePos);
+
+            pSolidBrush->SetColor(bHov ? ColorHex(0x28283C) : (seg.isArchiveRoot ? ColorHex(0x20182C) : ColorHex(0x181824)));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(seg.pillRect, 4.0f, 4.0f), pSolidBrush);
+            pSolidBrush->SetColor(seg.isArchiveRoot ? ColorHex(0x8A5CF6) : (bHov ? theme.accent : ColorHex(0x2E2E40)));
+            pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(seg.pillRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
+
+            D2D1_COLOR_F txtCol = seg.isArchiveRoot ? ColorHex(0xC4B5FD) : (bHov ? theme.accent : ColorHex(0xD0D0E0));
+            DrawText(seg.label, curX + 7.0f, btnY + 4.0f, txtCol, pUIFormatSmall);
+
+            curX += segW + 2.0f;
+            if (i + 1 < pane.explorer.breadcrumbs.size() && curX + 10.0f < bcMaxRight) {
+                DrawText(L">", curX, btnY + 4.0f, ColorHex(0x565668), pUIFormatSmall);
+                curX += 12.0f;
+            }
+        }
+
+        // ====================================================================
+        // 2. DRIVES & QUICK ACCESS STRIP
+        // ====================================================================
+        float stripY = py + topNavH;
+        D2D1_RECT_F stripR = D2D1::RectF(px, stripY, px + pw, stripY + driveStripH);
+        pSolidBrush->SetColor(ColorHex(0x13131A));
+        pRenderTarget->FillRectangle(stripR, pSolidBrush);
+        pSolidBrush->SetColor(ColorHex(0x1F1F2B));
+        pRenderTarget->DrawLine(D2D1::Point2F(px, stripY + driveStripH), D2D1::Point2F(px + pw, stripY + driveStripH), pSolidBrush, 1.0f);
+
+        float dX = px + 8.0f;
+        float dBtnY = stripY + 2.0f;
+        float dBtnH = 22.0f;
+
+        // Drive pills
+        for (auto& drv : pane.explorer.drives) {
+            std::wstring drvLbl = drv.displayName;
+            float dW = MeasureStringWidth(drvLbl, pUIFormatSmall) + 12.0f;
+            if (dX + dW > px + pw * 0.60f) break;
+
+            drv.pillRect = D2D1::RectF(dX, dBtnY, dX + dW, dBtnY + dBtnH);
+            bool drvHov = PtInD2D1Rect(drv.pillRect, mousePos);
+            pSolidBrush->SetColor(drvHov ? ColorHex(0x222232) : ColorHex(0x181822));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(drv.pillRect, 3.0f, 3.0f), pSolidBrush);
+            pSolidBrush->SetColor(drv.isSSD ? ColorHex(0x00FFBF) : ColorHex(0xF59E0B));
+            pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(drv.pillRect, 3.0f, 3.0f), pSolidBrush, 1.0f);
+            DrawText(drvLbl, dX + 6.0f, dBtnY + 3.0f, drvHov ? ColorHex(0xFFFFFF) : ColorHex(0xB0B0C4), pUIFormatSmall);
+            dX += dW + 6.0f;
+        }
+
+        // Quick Access pills
+        for (auto& qa : pane.explorer.quickAccess) {
+            float qW = MeasureStringWidth(qa.label, pUIFormatSmall) + 10.0f;
+            if (dX + qW > px + pw * 0.70f) break;
+
+            qa.pillRect = D2D1::RectF(dX, dBtnY, dX + qW, dBtnY + dBtnH);
+            bool qHov = PtInD2D1Rect(qa.pillRect, mousePos);
+            pSolidBrush->SetColor(qHov ? ColorHex(0x20202E) : ColorHex(0x161620));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(qa.pillRect, 3.0f, 3.0f), pSolidBrush);
+            DrawText(qa.label, dX + 5.0f, dBtnY + 3.0f, qHov ? theme.accent : ColorHex(0x8A8A9E), pUIFormatSmall);
+            dX += qW + 4.0f;
+        }
+
+        // Right-side utility buttons: Link CWD, F5 Copy, F6 Move, Extract
+        float actRight = px + pw - 8.0f;
+        auto drawActionPill = [&](D2D1_RECT_F& outRect, const std::wstring& label, bool active) {
+            float wPill = MeasureStringWidth(label, pUIFormatSmall) + 12.0f;
+            actRight -= wPill;
+            outRect = D2D1::RectF(actRight, dBtnY, actRight + wPill, dBtnY + dBtnH);
+            bool hov = PtInD2D1Rect(outRect, mousePos);
+            pSolidBrush->SetColor(active ? ColorHex(0x1F2A38) : (hov ? ColorHex(0x222230) : ColorHex(0x161620)));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(outRect, 3.0f, 3.0f), pSolidBrush);
+            pSolidBrush->SetColor(active ? theme.accent : ColorHex(0x323244));
+            pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(outRect, 3.0f, 3.0f), pSolidBrush, 1.0f);
+            DrawText(label, actRight + 6.0f, dBtnY + 3.0f, active ? theme.accent : (hov ? ColorHex(0xF0F0FF) : ColorHex(0x9A9AB0)), pUIFormatSmall);
+            actRight -= 6.0f;
+        };
+
+        if (pane.explorer.inVirtualArchive) {
+            drawActionPill(pane.expExtractAllBtnRect, I18n::Tr(L"Extrair Tudo", L"Extract All", L"Extraer Todo"), false);
+        }
+        drawActionPill(pane.expF6MoveBtnRect, L"F6 Move", false);
+        drawActionPill(pane.expF5CopyBtnRect, L"F5 Copy", false);
+        drawActionPill(pane.expLinkCwdBtnRect, L"Link CWD", pane.explorer.linkCwdWithTerminal);
+
+        // ====================================================================
+        // 3. MAIN BODY: LEFT FILE TABLE + RIGHT INSPECTOR DOCK
+        // ====================================================================
+        float contentY = stripY + driveStripH;
+        float inspectorW = (pw > 720.0f) ? (std::min)(440.0f, pw * 0.44f) : 0.0f;
+        float tableW = pw - inspectorW;
+
+        pane.expTableRect = D2D1::RectF(px, contentY, px + tableW, contentY + bodyH);
+        pane.expPreviewRect = (inspectorW > 0.0f) ? D2D1::RectF(px + tableW, contentY, px + pw, contentY + bodyH) : D2D1::RectF(0, 0, 0, 0);
+
+        // --- LEFT TABLE ---
+        float colHeaderH = 24.0f;
+        D2D1_RECT_F colHdrR = D2D1::RectF(px, contentY, px + tableW, contentY + colHeaderH);
+        pSolidBrush->SetColor(ColorHex(0x14141E));
+        pRenderTarget->FillRectangle(colHdrR, pSolidBrush);
+        pSolidBrush->SetColor(ColorHex(0x222232));
+        pRenderTarget->DrawLine(D2D1::Point2F(px, contentY + colHeaderH), D2D1::Point2F(px + tableW, contentY + colHeaderH), pSolidBrush, 1.0f);
+
+        float dateColW = 120.0f;
+        float typeColW = 60.0f;
+        float sizeColW = 80.0f;
+        float nameColW = (std::max)(100.0f, tableW - dateColW - typeColW - sizeColW);
+
+        float cX = px + 8.0f;
+        pane.expColNameRect = D2D1::RectF(cX, contentY, cX + nameColW, contentY + colHeaderH);
+        DrawText(std::wstring(I18n::Tr(L"Nome", L"Name", L"Nombre")) + (pane.explorer.sortColumn == ExplorerSortColumn::Name ? (pane.explorer.sortAscending ? L" ^" : L" v") : L""), cX, contentY + 4.0f, ColorHex(0x8A8A9E), pUIFormatSmall);
+        cX += nameColW;
+
+        pane.expColSizeRect = D2D1::RectF(cX, contentY, cX + sizeColW, contentY + colHeaderH);
+        DrawText(std::wstring(I18n::Tr(L"Tamanho", L"Size", L"Tamano")) + (pane.explorer.sortColumn == ExplorerSortColumn::Size ? (pane.explorer.sortAscending ? L" ^" : L" v") : L""), cX, contentY + 4.0f, ColorHex(0x8A8A9E), pUIFormatSmall);
+        cX += sizeColW;
+
+        pane.expColTypeRect = D2D1::RectF(cX, contentY, cX + typeColW, contentY + colHeaderH);
+        DrawText(std::wstring(I18n::Tr(L"Tipo", L"Type", L"Tipo")) + (pane.explorer.sortColumn == ExplorerSortColumn::TypeExtension ? (pane.explorer.sortAscending ? L" ^" : L" v") : L""), cX, contentY + 4.0f, ColorHex(0x8A8A9E), pUIFormatSmall);
+        cX += typeColW;
+
+        pane.expColDateRect = D2D1::RectF(cX, contentY, cX + dateColW, contentY + colHeaderH);
+        DrawText(std::wstring(I18n::Tr(L"Modificado", L"Modified", L"Modificado")) + (pane.explorer.sortColumn == ExplorerSortColumn::ModifiedDate ? (pane.explorer.sortAscending ? L" ^" : L" v") : L""), cX, contentY + 4.0f, ColorHex(0x8A8A9E), pUIFormatSmall);
+
+        // Virtualized Table Rows
+        float listY = contentY + colHeaderH;
+        float listH = bodyH - colHeaderH;
+        D2D1_RECT_F tableBodyClip = D2D1::RectF(px, listY, px + tableW, listY + listH);
+        pRenderTarget->PushAxisAlignedClip(tableBodyClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+        float rowH = 22.0f;
+        const auto& visibleIndices = pane.explorer.visibleEntryIndices;
+        size_t totalRows = visibleIndices.size();
+
+        size_t startRow = (pane.scrollOffsetY > 0.0f) ? static_cast<size_t>(pane.scrollOffsetY / rowH) : 0;
+        size_t maxVisibleRows = static_cast<size_t>(listH / rowH) + 2;
+        size_t endRow = (std::min)(totalRows, startRow + maxVisibleRows);
+
+        float curRowY = listY + static_cast<float>(startRow) * rowH - pane.scrollOffsetY;
+
+        for (size_t r = startRow; r < endRow; ++r) {
+            size_t entryIdx = visibleIndices[r];
+            if (entryIdx >= pane.explorer.entries.size()) continue;
+            auto& entry = pane.explorer.entries[entryIdx];
+
+            D2D1_RECT_F rowRect = D2D1::RectF(px + 4.0f, curRowY, px + tableW - 4.0f, curRowY + rowH);
+            entry.hitRect = rowRect;
+
+            bool isSel = (static_cast<int>(r) == pane.explorer.selectedVisibleIndex);
+            bool isHov = PtInD2D1Rect(rowRect, mousePos);
+
+            if (isSel || isHov) {
+                pSolidBrush->SetColor(isSel ? ColorHex(0x202636) : ColorHex(0x181824));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(rowRect, 3.0f, 3.0f), pSolidBrush);
+                if (isSel) {
+                    pSolidBrush->SetColor(theme.accent);
+                    pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(rowRect, 3.0f, 3.0f), pSolidBrush, 1.0f);
+                }
+            }
+
+            // Proportional WizTree folder size background bar
+            if (settings.explorerShowFolderSizes && entry.sizeRatioOfParent > 0.01f) {
+                float barW = (tableW - 8.0f) * entry.sizeRatioOfParent;
+                D2D1_RECT_F wizBar = D2D1::RectF(px + 4.0f, curRowY + 1.0f, px + 4.0f + barW, curRowY + rowH - 1.0f);
+                pSolidBrush->SetColor(ColorRgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.08f));
+                pRenderTarget->FillRectangle(wizBar, pSolidBrush);
+            }
+
+            // Icon
+            std::string icon = "file.png";
+            if (entry.isDirectory) icon = "folder_16.png";
+            else if (entry.isArchiveOrGameContainer) icon = "layers_16.png";
+            else if (entry.extension == L".exe" || entry.extension == L".dll" || entry.extension == L".xex") icon = "exe.png";
+            else if (entry.extension == L".png" || entry.extension == L".jpg" || entry.extension == L".dds" || entry.extension == L".tim") icon = "image.png";
+            else if (entry.extension == L".wav" || entry.extension == L".mp3" || entry.extension == L".ogg" || entry.extension == L".adx") icon = "sparkles_16.png";
+            else if (entry.extension == L".mp4" || entry.extension == L".mkv" || entry.extension == L".bik") icon = "clock_16.png";
+            else if (entry.extension == L".glb" || entry.extension == L".gltf" || entry.extension == L".obj") icon = "layers_16.png";
+
+            D2D1_RECT_F icR = D2D1::RectF(px + 8.0f, curRowY + 3.0f, px + 24.0f, curRowY + 19.0f);
+            SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, icon, icR, 14.0f, 14.0f);
+
+            // Columns
+            float colX = px + 28.0f;
+            D2D1_COLOR_F txtCol = isSel ? ColorHex(0xFFFFFF) : (entry.isDirectory ? ColorHex(0xE2E8F0) : ColorHex(0xCBD5E1));
+            DrawText(TruncateTextToWidth(entry.name, nameColW - 24.0f, pUIFormatSmall), colX, curRowY + 3.0f, txtCol, pUIFormatSmall);
+            colX = px + 8.0f + nameColW;
+
+            DrawText(entry.sizeFormatted, colX, curRowY + 3.0f, ColorHex(0x94A3B8), pUIFormatSmall);
+            colX += sizeColW;
+
+            DrawText(entry.extension.empty() ? (entry.isDirectory ? L"<DIR>" : L"") : entry.extension, colX, curRowY + 3.0f, ColorHex(0x64748B), pUIFormatSmall);
+            colX += typeColW;
+
+            DrawText(entry.modifiedFormatted, colX, curRowY + 3.0f, ColorHex(0x64748B), pUIFormatSmall);
+
+            curRowY += rowH;
+        }
+        pRenderTarget->PopAxisAlignedClip();
+
+        // --- RIGHT INSPECTOR DOCK ---
+        if (inspectorW > 0.0f) {
+            float dockX = px + tableW;
+            pSolidBrush->SetColor(ColorHex(0x1F1F2E));
+            pRenderTarget->DrawLine(D2D1::Point2F(dockX, contentY), D2D1::Point2F(dockX, contentY + bodyH), pSolidBrush, 1.0f);
+
+            // Inspector Tabs (Preview | Hex | Info)
+            float tabBtnW = (inspectorW - 16.0f) / 3.0f;
+            float tabBtnH = 24.0f;
+            std::vector<std::wstring> tabLabels = {
+                I18n::Tr(L"Preview", L"Preview", L"Vista Previa"),
+                L"Hex",
+                I18n::Tr(L"Info / PE", L"Info / PE", L"Info / PE")
+            };
+
+            for (size_t t = 0; t < 3; ++t) {
+                pane.expInspectorTabRects[t] = D2D1::RectF(dockX + 8.0f + t * tabBtnW, contentY + 4.0f, dockX + 8.0f + (t + 1) * tabBtnW - 2.0f, contentY + 4.0f + tabBtnH);
+                bool tHov = PtInD2D1Rect(pane.expInspectorTabRects[t], mousePos);
+                bool tAct = (pane.activeInspectorTab == static_cast<int>(t));
+
+                pSolidBrush->SetColor(tAct ? ColorHex(0x28283C) : (tHov ? ColorHex(0x1E1E2C) : ColorHex(0x14141E)));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expInspectorTabRects[t], 4.0f, 4.0f), pSolidBrush);
+                if (tAct) {
+                    pSolidBrush->SetColor(theme.accent);
+                    pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expInspectorTabRects[t], 4.0f, 4.0f), pSolidBrush, 1.0f);
+                }
+                DrawText(tabLabels[t], pane.expInspectorTabRects[t].left + 10.0f, contentY + 8.0f, tAct ? theme.accent : ColorHex(0x94A3B8), pUIFormatSmall);
+            }
+
+            // Quick actions below tabs: [Edit in Spet@Term], [Export .PNG], [Hash], [Lock]
+            float actionY = contentY + 34.0f;
+            float btnSubH = 22.0f;
+            float aX = dockX + 8.0f;
+
+            auto drawInspectorAction = [&](D2D1_RECT_F& r, const std::wstring& lbl) {
+                float wB = MeasureStringWidth(lbl, pUIFormatSmall) + 12.0f;
+                r = D2D1::RectF(aX, actionY, aX + wB, actionY + btnSubH);
+                bool hov = PtInD2D1Rect(r, mousePos);
+                pSolidBrush->SetColor(hov ? ColorHex(0x2A2A3E) : ColorHex(0x1A1A26));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(r, 3.0f, 3.0f), pSolidBrush);
+                pSolidBrush->SetColor(ColorHex(0x36364E));
+                pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(r, 3.0f, 3.0f), pSolidBrush, 1.0f);
+                DrawText(lbl, aX + 6.0f, actionY + 3.0f, hov ? theme.accent : ColorHex(0xA0A0B8), pUIFormatSmall);
+                aX += wB + 6.0f;
+            };
+
+            drawInspectorAction(pane.expActionEditBtnRect, I18n::Tr(L"Editar", L"Edit", L"Editar"));
+            if (!pane.explorerPreviewRgba.empty()) {
+                drawInspectorAction(pane.expActionExportPngBtnRect, L"Export .PNG");
+            }
+            drawInspectorAction(pane.expCalcHashBtnRect, L"Hash");
+            drawInspectorAction(pane.expUnlockBtnRect, L"Lock Hunter");
+
+            // Inspector Body Area
+            float prevContentY = actionY + btnSubH + 6.0f;
+            float prevContentH = bodyH - (prevContentY - contentY);
+            D2D1_RECT_F prevArea = D2D1::RectF(dockX + 8.0f, prevContentY, px + pw - 8.0f, prevContentY + prevContentH);
+
+            if (pane.activeInspectorTab == 0) {
+                // TAB 0: PREVIEW
+                if (pane.explorerPreviewIs3D) {
+                    // 3D Toolbar
+                    pane.exp3DWireframeBtnRect = D2D1::RectF(prevArea.left, prevArea.top, prevArea.left + 70.0f, prevArea.top + 20.0f);
+                    pane.exp3DAutoRotBtnRect = D2D1::RectF(prevArea.left + 74.0f, prevArea.top, prevArea.left + 150.0f, prevArea.top + 20.0f);
+                    pane.exp3DResetBtnRect = D2D1::RectF(prevArea.left + 154.0f, prevArea.top, prevArea.left + 224.0f, prevArea.top + 20.0f);
+
+                    auto draw3DControl = [&](const D2D1_RECT_F& r, const std::wstring& lbl, bool act) {
+                        pSolidBrush->SetColor(act ? ColorHex(0x223244) : ColorHex(0x181822));
+                        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(r, 3.0f, 3.0f), pSolidBrush);
+                        pSolidBrush->SetColor(act ? theme.accent : ColorHex(0x323246));
+                        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(r, 3.0f, 3.0f), pSolidBrush, 1.0f);
+                        DrawText(lbl, r.left + 6.0f, r.top + 3.0f, act ? theme.accent : ColorHex(0x94A3B8), pUIFormatSmall);
+                    };
+
+                    draw3DControl(pane.exp3DWireframeBtnRect, L"Wireframe", preview3D.IsWireframe());
+                    draw3DControl(pane.exp3DAutoRotBtnRect, L"Auto-Rotate", preview3D.IsAutoRotate());
+                    draw3DControl(pane.exp3DResetBtnRect, L"Reset Cam", false);
+
+                    // 3D Viewport
+                    pane.expViewport3DRect = D2D1::RectF(prevArea.left, prevArea.top + 24.0f, prevArea.right, prevArea.bottom - 40.0f);
+                    float vW = pane.expViewport3DRect.right - pane.expViewport3DRect.left;
+                    float vH = pane.expViewport3DRect.bottom - pane.expViewport3DRect.top;
+                    if (vW > 20.0f && vH > 20.0f) {
+                        ID2D1Bitmap1* pBmp = preview3D.RenderFrame(pD3DDevice, pD3DContext, pD2DContext, 0.016f, static_cast<uint32_t>(vW), static_cast<uint32_t>(vH));
+                        if (pBmp) {
+                            pRenderTarget->DrawBitmap(pBmp, pane.expViewport3DRect);
+                        }
+                    }
+
+                    // 3D Stats
+                    std::wstring stats = L"Verts: " + std::to_wstring(preview3D.GetVertexCount()) +
+                                         L"  Tris: " + std::to_wstring(preview3D.GetTriangleCount()) +
+                                         L"  Submeshes: " + std::to_wstring(preview3D.GetSubMeshCount());
+                    DrawText(stats, prevArea.left, prevArea.bottom - 32.0f, ColorHex(0x38BDF8), pUIFormatSmall);
+                } else if (pane.explorerPreviewIsDoomMap) {
+                    // DOOM 2D Vector Map
+                    D2D1_RECT_F mapR = D2D1::RectF(prevArea.left, prevArea.top, prevArea.right, prevArea.bottom - 20.0f);
+                    pSolidBrush->SetColor(ColorHex(0x0C0C10));
+                    pRenderTarget->FillRectangle(mapR, pSolidBrush);
+
+                    float mW = mapR.right - mapR.left;
+                    float mH = mapR.bottom - mapR.top;
+                    float rangeX = pane.explorerDoomMap.maxX - pane.explorerDoomMap.minX;
+                    float rangeY = pane.explorerDoomMap.maxY - pane.explorerDoomMap.minY;
+                    if (rangeX > 1.0f && rangeY > 1.0f) {
+                        float scale = (std::min)((mW - 20.0f) / rangeX, (mH - 20.0f) / rangeY);
+                        for (const auto& line : pane.explorerDoomMap.lines) {
+                            float x1 = mapR.left + 10.0f + (line.x1 - pane.explorerDoomMap.minX) * scale;
+                            float y1 = mapR.bottom - 10.0f - (line.y1 - pane.explorerDoomMap.minY) * scale;
+                            float x2 = mapR.left + 10.0f + (line.x2 - pane.explorerDoomMap.minX) * scale;
+                            float y2 = mapR.bottom - 10.0f - (line.y2 - pane.explorerDoomMap.minY) * scale;
+
+                            pSolidBrush->SetColor(line.twoSided ? ColorHex(0xF59E0B) : ColorHex(0xEF4444));
+                            pRenderTarget->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), pSolidBrush, line.twoSided ? 0.8f : 1.2f);
+                        }
+                    }
+                    DrawText(L"DOOM Map: " + std::to_wstring(pane.explorerDoomMap.lines.size()) + L" lines", prevArea.left, prevArea.bottom - 16.0f, ColorHex(0x94A3B8), pUIFormatSmall);
+                } else if (pane.explorerPreviewIsAudio) {
+                    // Audio Player Card
+                    pSolidBrush->SetColor(ColorHex(0x14141E));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(prevArea, 6.0f, 6.0f), pSolidBrush);
+
+                    pane.expActionPlayAudioBtnRect = D2D1::RectF(prevArea.left + 14.0f, prevArea.top + 14.0f, prevArea.left + 70.0f, prevArea.top + 42.0f);
+                    pane.expActionStopAudioBtnRect = D2D1::RectF(prevArea.left + 76.0f, prevArea.top + 14.0f, prevArea.left + 130.0f, prevArea.top + 42.0f);
+
+                    auto drawAudioBtn = [&](const D2D1_RECT_F& r, const std::wstring& lbl) {
+                        pSolidBrush->SetColor(PtInD2D1Rect(r, mousePos) ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+                        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush);
+                        pSolidBrush->SetColor(ColorHex(0x38384E));
+                        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush, 1.0f);
+                        DrawText(lbl, r.left + 10.0f, r.top + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+                    };
+
+                    drawAudioBtn(pane.expActionPlayAudioBtnRect, audioPlayer.IsPlaying() ? L"Pause" : L"Play");
+                    drawAudioBtn(pane.expActionStopAudioBtnRect, L"Stop");
+
+                    // Real-time 64-bar Waveform
+                    float waveY = prevArea.top + 60.0f;
+                    float waveH = (std::min)(120.0f, prevArea.bottom - waveY - 40.0f);
+                    float barW = (prevArea.right - prevArea.left - 28.0f) / 64.0f;
+                    for (int b = 0; b < 64; ++b) {
+                        float peak = (std::clamp)(audioPlayer.waveformPeaks[b], 0.05f, 1.0f);
+                        float bH = waveH * peak;
+                        D2D1_RECT_F barR = D2D1::RectF(prevArea.left + 14.0f + b * barW, waveY + waveH - bH, prevArea.left + 14.0f + (b + 1) * barW - 1.0f, waveY + waveH);
+                        pSolidBrush->SetColor(ColorHex(0x8B5CF6));
+                        pRenderTarget->FillRectangle(barR, pSolidBrush);
+                    }
+                } else if (pane.explorerPreviewIsVideo) {
+                    float vW = 0.0f, vH = 0.0f;
+                    ID2D1Bitmap* vBmp = previewMediaEngine.GetCurrentBitmap();
+                    if (vBmp) {
+                        pRenderTarget->DrawBitmap(vBmp, prevArea);
+                    }
+                } else if (pane.explorerPreviewBitmap) {
+                    D2D1_SIZE_F sz = pane.explorerPreviewBitmap->GetSize();
+                    float fitScale = (std::min)((prevArea.right - prevArea.left) / sz.width, (prevArea.bottom - prevArea.top - 24.0f) / sz.height);
+                    float dstW = sz.width * fitScale;
+                    float dstH = sz.height * fitScale;
+                    D2D1_RECT_F dstR = D2D1::RectF(prevArea.left, prevArea.top, prevArea.left + dstW, prevArea.top + dstH);
+                    pRenderTarget->DrawBitmap(pane.explorerPreviewBitmap, dstR);
+
+                    std::wstring dim = pane.explorerPreviewImageFormat + L" - " + std::to_wstring(static_cast<int>(sz.width)) + L"x" + std::to_wstring(static_cast<int>(sz.height));
+                    DrawText(dim, prevArea.left, prevArea.bottom - 18.0f, ColorHex(0x94A3B8), pUIFormatSmall);
+                } else if (!pane.explorerPreviewTextLines.empty()) {
+                    float txtY = prevArea.top;
+                    for (size_t l = 0; l < pane.explorerPreviewTextLines.size() && txtY < prevArea.bottom; ++l) {
+                        DrawText(pane.explorerPreviewTextLines[l], prevArea.left, txtY, ColorHex(0xCBD5E1), pUIFormatSmall);
+                        txtY += 16.0f;
+                    }
+                } else {
+                    DrawText(I18n::Tr(L"Selecione um arquivo para pre-visualizar", L"Select a file to preview", L"Selecciona un archivo para vista previa"),
+                             prevArea.left + 10.0f, prevArea.top + 20.0f, ColorHex(0x64748B), pUIFormat);
+                }
+            } else if (pane.activeInspectorTab == 1) {
+                // TAB 1: HEX INSPECTOR
+                float hexY = prevArea.top;
+                const auto& bytes = pane.explorerPreviewRawBytes;
+                size_t maxRows = static_cast<size_t>((prevArea.bottom - prevArea.top - 60.0f) / 16.0f);
+                for (size_t r = 0; r < maxRows && (r * 16) < bytes.size(); ++r) {
+                    size_t off = r * 16;
+                    wchar_t offBuf[32];
+                    swprintf_s(offBuf, L"%08zX: ", off);
+
+                    std::wstring hexStr = offBuf;
+                    std::wstring ascStr = L" | ";
+                    for (size_t b = 0; b < 16; ++b) {
+                        if (off + b < bytes.size()) {
+                            uint8_t byteVal = bytes[off + b];
+                            wchar_t bBuf[8];
+                            swprintf_s(bBuf, L"%02X ", byteVal);
+                            hexStr += bBuf;
+                            ascStr += (byteVal >= 32 && byteVal <= 126) ? static_cast<wchar_t>(byteVal) : L'.';
+                        } else {
+                            hexStr += L"   ";
+                        }
+                    }
+                    DrawText(hexStr + ascStr, prevArea.left, hexY, ColorHex(0x94A3B8), pUIFormatSmall);
+                    hexY += 16.0f;
+                }
+            } else if (pane.activeInspectorTab == 2) {
+                // TAB 2: INFO / PE / CONTAINER
+                float infoY = prevArea.top;
+                if (pane.explorer.inVirtualArchive && pane.explorer.activeArchive) {
+                    DrawText(L"Archive: " + pane.explorer.activeArchive->formatName, prevArea.left, infoY, theme.accent, pUIFormatBold); infoY += 20.0f;
+                    DrawText(L"Engine: " + pane.explorer.activeArchive->engineName, prevArea.left, infoY, ColorHex(0xF0F0FF), pUIFormat); infoY += 22.0f;
+                    for (const auto& hf : pane.explorer.activeArchive->headerFields) {
+                        if (infoY > prevArea.bottom - 16.0f) break;
+                        DrawText(hf.label + L": " + hf.value, prevArea.left, infoY, ColorHex(0x94A3B8), pUIFormatSmall);
+                        infoY += 16.0f;
+                    }
+                } else if (pane.explorerPreviewIsExecutable) {
+                    DrawText(L"Arch: " + pane.explorerExeInfo.architecture, prevArea.left, infoY, theme.accent, pUIFormatBold); infoY += 18.0f;
+                    DrawText(L"Subsystem: " + pane.explorerExeInfo.subsystem, prevArea.left, infoY, ColorHex(0xF0F0FF), pUIFormatSmall); infoY += 18.0f;
+                    DrawText(L"Date: " + pane.explorerExeInfo.compileTimeFormatted, prevArea.left, infoY, ColorHex(0x94A3B8), pUIFormatSmall); infoY += 20.0f;
+                    DrawText(L"Imported DLLs:", prevArea.left, infoY, ColorHex(0x8A8A9E), pUIFormatSmall); infoY += 16.0f;
+                    for (const auto& dll : pane.explorerExeInfo.importedDlls) {
+                        if (infoY > prevArea.bottom - 16.0f) break;
+                        DrawText(dll.dllName, prevArea.left + 8.0f, infoY, dll.foundOnSystem ? ColorHex(0x4ADE80) : ColorHex(0xEF4444), pUIFormatSmall);
+                        infoY += 16.0f;
+                    }
+                }
+            }
+        }
+
+        // ====================================================================
+        // 4. BOTTOM TRANSFER QUEUE STATUS BAR
+        // ====================================================================
+        if (!transferSnapshots.empty()) {
+            float tY = py + ph - transferBarH;
+            D2D1_RECT_F tBarR = D2D1::RectF(px, tY, px + pw, py + ph);
+            pSolidBrush->SetColor(ColorHex(0x141A24));
+            pRenderTarget->FillRectangle(tBarR, pSolidBrush);
+            pSolidBrush->SetColor(ColorHex(0x28384E));
+            pRenderTarget->DrawLine(D2D1::Point2F(px, tY), D2D1::Point2F(px + pw, tY), pSolidBrush, 1.0f);
+
+            const auto& snap = transferSnapshots[0];
+            expTransferActiveJobId = snap.jobId;
+
+            wchar_t spdBuf[64];
+            swprintf_s(spdBuf, L"Transferring: %s  |  %.1f MB/s  |  %llu / %llu files",
+                       snap.currentFileName.c_str(), snap.transferSpeedMBps,
+                       snap.completedFiles, snap.totalFiles);
+            DrawText(spdBuf, px + 12.0f, tY + 5.0f, ColorHex(0x38BDF8), pUIFormatSmall);
+
+            // Cancel Button on right
+            expTransferCancelRect = D2D1::RectF(px + pw - 60.0f, tY + 3.0f, px + pw - 8.0f, tY + transferBarH - 3.0f);
+            pSolidBrush->SetColor(PtInD2D1Rect(expTransferCancelRect, mousePos) ? ColorHex(0x7F1D1D) : ColorHex(0x450A0A));
+            pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(expTransferCancelRect, 3.0f, 3.0f), pSolidBrush);
+            DrawText(L"Cancel", expTransferCancelRect.left + 6.0f, tY + 4.0f, ColorHex(0xFCA5A5), pUIFormatSmall);
+        }
+    }
+
 
 private:
     void MeasureFontMetrics() {

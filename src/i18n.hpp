@@ -1,6 +1,26 @@
 #pragma once
 
-#include "common.hpp"
+#ifndef _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+#define _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH 1
+#endif
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <windows.h>
+#include <string>
+#include <string_view>
+#include <cctype>
 
 namespace speta {
 
@@ -111,7 +131,47 @@ enum class StringId {
 
     // Prompts & Badges
     Prompt_Running,
-    Prompt_QuickFix
+    Prompt_QuickFix,
+
+    // 5-Mode Launcher
+    Launcher_Title,
+    Launcher_Subtitle,
+    Launcher_FileExplorer,
+    Launcher_FileExplorerDesc,
+    Launcher_PowerShell,
+    Launcher_PowerShellDesc,
+    Launcher_PowerShellAdmin,
+    Launcher_PowerShellAdminDesc,
+    Launcher_Cmd,
+    Launcher_CmdDesc,
+    Launcher_CmdAdmin,
+    Launcher_CmdAdminDesc,
+
+    // File Explorer UI
+    Explorer_SearchPlaceholder,
+    Explorer_FilterPlaceholder,
+    Explorer_EmptyFolder,
+    Explorer_ExtractHere,
+    Explorer_ExtractToFolder,
+    Explorer_CompressZip,
+    Explorer_CalculateHash,
+    Explorer_HashCopiedToast,
+    Explorer_UnlockFile,
+    Explorer_LinkCwd,
+    Explorer_CommanderCopyF5,
+    Explorer_CommanderMoveF6,
+    Explorer_SaveAndRepack,
+    Explorer_RepackSuccessToast,
+    Explorer_ExportPng,
+    Explorer_AudioPlay,
+    Explorer_AudioPause,
+    Explorer_3DWireframe,
+    Explorer_3DAutoRotate,
+    Explorer_3DResetCam,
+    Explorer_ShowFolderSizesSetting,
+    Explorer_ShowFolderSizesDesc,
+    Explorer_StartupModeSetting,
+    Explorer_StartupModeDesc
 };
 
 class I18n {
@@ -162,14 +222,21 @@ public:
         return LanguageMode::EnUS;
     }
 
+    static const wchar_t* Tr(const wchar_t* pt, const wchar_t* en, const wchar_t* es = nullptr) {
+        LanguageMode m = GetResolvedLanguage();
+        if (m == LanguageMode::PtBR) return pt;
+        if (m == LanguageMode::EsES) return (es && es[0]) ? es : en;
+        return en;
+    }
+
     static const wchar_t* Get(StringId id) {
         LanguageMode lang = GetResolvedLanguage();
 
         switch (id) {
         // File Menu
         case StringId::FileMenu_Workfolder:
-            if (lang == LanguageMode::PtBR) return L"Workfolder Preview";
-            if (lang == LanguageMode::EsES) return L"Vista de Carpeta";
+            if (lang == LanguageMode::PtBR) return L"Explorar Pasta de Trabalho";
+            if (lang == LanguageMode::EsES) return L"Explorar Carpeta de Trabajo";
             return L"Workfolder Preview";
 
         case StringId::FileMenu_RunPs1:
@@ -576,6 +643,188 @@ public:
             if (lang == LanguageMode::PtBR) return L"Aplicar: ";
             if (lang == LanguageMode::EsES) return L"Aplicar: ";
             return L"Apply: ";
+
+        // 5-Mode Launcher
+        case StringId::Launcher_Title:
+            if (lang == LanguageMode::PtBR) return L"Selecione o Modo da Nova Aba";
+            if (lang == LanguageMode::EsES) return L"Seleccione el Modo de la Nueva Pestaña";
+            return L"Select New Tab Mode";
+
+        case StringId::Launcher_Subtitle:
+            if (lang == LanguageMode::PtBR) return L"Use as teclas 1-5, setas ou clique para iniciar";
+            if (lang == LanguageMode::EsES) return L"Use las teclas 1-5, flechas o clic para iniciar";
+            return L"Press 1-5, use arrow keys, or click to launch";
+
+        case StringId::Launcher_FileExplorer:
+            if (lang == LanguageMode::PtBR) return L"Explorador de Arquivos";
+            if (lang == LanguageMode::EsES) return L"Explorador de Archivos";
+            return L"File Explorer";
+
+        case StringId::Launcher_FileExplorerDesc:
+            if (lang == LanguageMode::PtBR) return L"Gerenciador nativo com arquivos compactados, pacotes de jogos e preview 3D/midia";
+            if (lang == LanguageMode::EsES) return L"Gestor nativo con archivos comprimidos, paquetes de juegos y vista previa 3D/multimedia";
+            return L"Native file manager with archives, game assets, and 3D/media preview";
+
+        case StringId::Launcher_PowerShell:
+            if (lang == LanguageMode::PtBR) return L"PowerShell";
+            if (lang == LanguageMode::EsES) return L"PowerShell";
+            return L"PowerShell";
+
+        case StringId::Launcher_PowerShellDesc:
+            if (lang == LanguageMode::PtBR) return L"Sessão padrão do PowerShell com autocomplete, blocos e diagnóstico inteligente";
+            if (lang == LanguageMode::EsES) return L"Sesión estándar de PowerShell con autocompletado, bloques y diagnóstico inteligente";
+            return L"Standard PowerShell session with autocomplete, blocks, and smart diagnostics";
+
+        case StringId::Launcher_PowerShellAdmin:
+            if (lang == LanguageMode::PtBR) return L"PowerShell (Admin)";
+            if (lang == LanguageMode::EsES) return L"PowerShell (Admin)";
+            return L"PowerShell (Admin)";
+
+        case StringId::Launcher_PowerShellAdminDesc:
+            if (lang == LanguageMode::PtBR) return L"Sessão elevada do PowerShell com privilégios de Administrador";
+            if (lang == LanguageMode::EsES) return L"Sesión elevada de PowerShell con privilegios de Administrador";
+            return L"Elevated PowerShell session with Administrator privileges";
+
+        case StringId::Launcher_Cmd:
+            if (lang == LanguageMode::PtBR) return L"Prompt de Comando (CMD)";
+            if (lang == LanguageMode::EsES) return L"Símbolo del Sistema (CMD)";
+            return L"Command Prompt (CMD)";
+
+        case StringId::Launcher_CmdDesc:
+            if (lang == LanguageMode::PtBR) return L"Interpretador clássico cmd.exe ultrarrápido com comandos nativos";
+            if (lang == LanguageMode::EsES) return L"Intérprete clásico cmd.exe ultrarrápido con comandos nativos";
+            return L"Fast classic cmd.exe interpreter with native built-in commands";
+
+        case StringId::Launcher_CmdAdmin:
+            if (lang == LanguageMode::PtBR) return L"Prompt de Comando (Admin)";
+            if (lang == LanguageMode::EsES) return L"Símbolo del Sistema (Admin)";
+            return L"Command Prompt (Admin)";
+
+        case StringId::Launcher_CmdAdminDesc:
+            if (lang == LanguageMode::PtBR) return L"Sessão elevada do CMD para manutenção do sistema, diskpart, sfc e dism";
+            if (lang == LanguageMode::EsES) return L"Sesión elevada de CMD para mantenimiento del sistema, diskpart, sfc y dism";
+            return L"Elevated CMD session for system maintenance, diskpart, sfc, and dism";
+
+        // File Explorer UI
+        case StringId::Explorer_SearchPlaceholder:
+            if (lang == LanguageMode::PtBR) return L"Buscar arquivos e pastas (Ctrl+F)...";
+            if (lang == LanguageMode::EsES) return L"Buscar archivos y carpetas (Ctrl+F)...";
+            return L"Search files and folders (Ctrl+F)...";
+
+        case StringId::Explorer_FilterPlaceholder:
+            if (lang == LanguageMode::PtBR) return L"Filtrar lista atual...";
+            if (lang == LanguageMode::EsES) return L"Filtrar lista actual...";
+            return L"Filter current list...";
+
+        case StringId::Explorer_EmptyFolder:
+            if (lang == LanguageMode::PtBR) return L"Esta pasta está vazia";
+            if (lang == LanguageMode::EsES) return L"Esta carpeta está vacía";
+            return L"This folder is empty";
+
+        case StringId::Explorer_ExtractHere:
+            if (lang == LanguageMode::PtBR) return L"Extrair Aqui";
+            if (lang == LanguageMode::EsES) return L"Extraer Aquí";
+            return L"Extract Here";
+
+        case StringId::Explorer_ExtractToFolder:
+            if (lang == LanguageMode::PtBR) return L"Extrair para Pasta";
+            if (lang == LanguageMode::EsES) return L"Extraer en Carpeta";
+            return L"Extract to Folder";
+
+        case StringId::Explorer_CompressZip:
+            if (lang == LanguageMode::PtBR) return L"Compactar em .ZIP";
+            if (lang == LanguageMode::EsES) return L"Comprimir en .ZIP";
+            return L"Compress to .ZIP";
+
+        case StringId::Explorer_CalculateHash:
+            if (lang == LanguageMode::PtBR) return L"Calcular Hash (CRC32 / MD5 / SHA-256)";
+            if (lang == LanguageMode::EsES) return L"Calcular Hash (CRC32 / MD5 / SHA-256)";
+            return L"Calculate Hash (CRC32 / MD5 / SHA-256)";
+
+        case StringId::Explorer_HashCopiedToast:
+            if (lang == LanguageMode::PtBR) return L"Hash SHA-256 copiado para a área de transferência";
+            if (lang == LanguageMode::EsES) return L"Hash SHA-256 copiado al portapapeles";
+            return L"SHA-256 hash copied to clipboard";
+
+        case StringId::Explorer_UnlockFile:
+            if (lang == LanguageMode::PtBR) return L"Quem está travando este arquivo?";
+            if (lang == LanguageMode::EsES) return L"¿Quién bloquea este archivo?";
+            return L"Who is locking this file?";
+
+        case StringId::Explorer_LinkCwd:
+            if (lang == LanguageMode::PtBR) return L"Sincronizar pasta com Terminal";
+            if (lang == LanguageMode::EsES) return L"Sincronizar carpeta con Terminal";
+            return L"Sync CWD with Terminal";
+
+        case StringId::Explorer_CommanderCopyF5:
+            if (lang == LanguageMode::PtBR) return L"F5 Copiar para Painel Oposto";
+            if (lang == LanguageMode::EsES) return L"F5 Copiar al Panel Opuesto";
+            return L"F5 Copy to Opposite Pane";
+
+        case StringId::Explorer_CommanderMoveF6:
+            if (lang == LanguageMode::PtBR) return L"F6 Mover para Painel Oposto";
+            if (lang == LanguageMode::EsES) return L"F6 Mover al Panel Opuesto";
+            return L"F6 Move to Opposite Pane";
+
+        case StringId::Explorer_SaveAndRepack:
+            if (lang == LanguageMode::PtBR) return L"Salvar e Reempacotar Arquivo (Ctrl+S)";
+            if (lang == LanguageMode::EsES) return L"Guardar y Reempaquetar Archivo (Ctrl+S)";
+            return L"Save & Repack Archive (Ctrl+S)";
+
+        case StringId::Explorer_RepackSuccessToast:
+            if (lang == LanguageMode::PtBR) return L"Arquivo salvo e reempacotado com sucesso";
+            if (lang == LanguageMode::EsES) return L"Archivo guardado y reempaquetado con éxito";
+            return L"Archive saved and repacked successfully";
+
+        case StringId::Explorer_ExportPng:
+            if (lang == LanguageMode::PtBR) return L"Exportar Textura como .PNG";
+            if (lang == LanguageMode::EsES) return L"Exportar Textura como .PNG";
+            return L"Export Texture as .PNG";
+
+        case StringId::Explorer_AudioPlay:
+            if (lang == LanguageMode::PtBR) return L"Reproduzir";
+            if (lang == LanguageMode::EsES) return L"Reproducir";
+            return L"Play";
+
+        case StringId::Explorer_AudioPause:
+            if (lang == LanguageMode::PtBR) return L"Pausar";
+            if (lang == LanguageMode::EsES) return L"Pausar";
+            return L"Pause";
+
+        case StringId::Explorer_3DWireframe:
+            if (lang == LanguageMode::PtBR) return L"Wireframe";
+            if (lang == LanguageMode::EsES) return L"Malla (Wireframe)";
+            return L"Wireframe";
+
+        case StringId::Explorer_3DAutoRotate:
+            if (lang == LanguageMode::PtBR) return L"Rotação Automática";
+            if (lang == LanguageMode::EsES) return L"Rotación Automática";
+            return L"Auto-Rotate";
+
+        case StringId::Explorer_3DResetCam:
+            if (lang == LanguageMode::PtBR) return L"Resetar Câmera";
+            if (lang == LanguageMode::EsES) return L"Restablecer Cámara";
+            return L"Reset Camera";
+
+        case StringId::Explorer_ShowFolderSizesSetting:
+            if (lang == LanguageMode::PtBR) return L"Calcular Tamanho de Pastas no Explorer";
+            if (lang == LanguageMode::EsES) return L"Calcular Tamaño de Carpetas en Explorer";
+            return L"Calculate Folder Sizes in Explorer";
+
+        case StringId::Explorer_ShowFolderSizesDesc:
+            if (lang == LanguageMode::PtBR) return L"Calcula tamanhos em segundo plano (desative em HDDs lentos)";
+            if (lang == LanguageMode::EsES) return L"Calcula tamaños en segundo plano (desactivar en HDDs lentos)";
+            return L"Compute folder sizes in background (disable on slow HDDs)";
+
+        case StringId::Explorer_StartupModeSetting:
+            if (lang == LanguageMode::PtBR) return L"Modo Inicial ao Abrir / Nova Aba";
+            if (lang == LanguageMode::EsES) return L"Modo Inicial al Abrir / Nueva Pestaña";
+            return L"Default Startup / New Tab Mode";
+
+        case StringId::Explorer_StartupModeDesc:
+            if (lang == LanguageMode::PtBR) return L"Seletor de 5 modos, Explorador de Arquivos, PowerShell ou CMD";
+            if (lang == LanguageMode::EsES) return L"Selector de 5 modos, Explorador de Archivos, PowerShell o CMD";
+            return L"5-mode Launcher, File Explorer, PowerShell, or CMD";
         }
 
         return L"";

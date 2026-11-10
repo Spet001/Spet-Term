@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "i18n.hpp"
 
 namespace speta {
 
@@ -73,7 +74,7 @@ public:
     static Theme CreatePitchBlack() {
         Theme t;
         t.name = L"Pitch Black";
-        t.description = L"OLED puro com paleta refinada (#000000)";
+        t.description = I18n::Tr(L"OLED puro com paleta refinada (#000000)", L"Pure OLED with refined palette (#000000)", L"OLED puro con paleta refinada (#000000)");
         t.bg = ColorHex(0x000000);
         t.bgSecondary = ColorHex(0x0D0D11);
         t.blockBg = ColorHex(0x0A0A0E);
@@ -106,7 +107,7 @@ public:
     static Theme CreateBlue() {
         Theme t;
         t.name = L"Blue";
-        t.description = L"Deep Navy maritimo com azul suave (#06162E)";
+        t.description = I18n::Tr(L"Deep Navy maritimo com azul suave (#06162E)", L"Deep Navy maritime with soft blue (#06162E)", L"Azul marino profundo con azul suave (#06162E)");
         t.bg = ColorHex(0x06162E);
         t.bgSecondary = ColorHex(0x092040);
         t.blockBg = ColorHex(0x0B2244);
@@ -138,7 +139,7 @@ public:
     static Theme CreateLight() {
         Theme t;
         t.name = L"Light";
-        t.description = L"Claro e limpo com alta legibilidade (#F8FAFC)";
+        t.description = I18n::Tr(L"Claro e limpo com alta legibilidade (#F8FAFC)", L"Clean light mode with high readability (#F8FAFC)", L"Claro y limpio con alta legibilidad (#F8FAFC)");
         t.bg = ColorHex(0xF8FAFC);
         t.bgSecondary = ColorHex(0xF1F5F9);
         t.blockBg = ColorHex(0xFFFFFF);
@@ -170,7 +171,7 @@ public:
     static Theme CreateVSCode() {
         Theme t;
         t.name = L"VS Code Like";
-        t.description = L"Estilo Dark+ do VS Code com status azul (#1E1E1E)";
+        t.description = I18n::Tr(L"Estilo Dark+ do VS Code com status azul (#1E1E1E)", L"VS Code Dark+ style with blue status bar (#1E1E1E)", L"Estilo Dark+ de VS Code con barra azul (#1E1E1E)");
         t.bg = ColorHex(0x1E1E1E);
         t.bgSecondary = ColorHex(0x252526);
         t.blockBg = ColorHex(0x252526);
@@ -202,7 +203,7 @@ public:
     static Theme CreateGalaxy() {
         Theme t;
         t.name = L"Galaxy";
-        t.description = L"Cosmico translucido com nebulosa e estrelas procedurais";
+        t.description = I18n::Tr(L"Cosmico translucido com nebulosa e estrelas procedurais", L"Translucent cosmic theme with nebula and procedural stars", L"Cósmico translúcido con nebulosa y estrellas procedurales");
         t.bg = ColorHex(0x160A2C);
         t.bgSecondary = ColorRgba(0.10f, 0.05f, 0.18f, 0.85f);
         t.blockBg = ColorRgba(0.10f, 0.06f, 0.18f, 0.78f);
@@ -340,7 +341,7 @@ public:
     static Theme CreateWarmSepia() {
         Theme t;
         t.name = L"Warm Sepia";
-        t.description = L"Read Mode E-Ink Escuro Sepia (#17130F)";
+        t.description = I18n::Tr(L"Read Mode E-Ink Escuro Sepia (#17130F)", L"Dark Sepia E-Ink Read Mode (#17130F)", L"Modo Lectura E-Ink Sepia Oscuro (#17130F)");
         t.bg = ColorHex(0x17130F);
         t.bgSecondary = ColorHex(0x211B15);
         t.blockBg = ColorHex(0x1C1712);
