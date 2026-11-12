@@ -33,6 +33,11 @@ $MakeAppxPath = Get-ChildItem -Path $SdkKitsRoot -Filter "makeappx.exe" -Recurse
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1 -ExpandProperty FullName
 
+$MakePriPath = Get-ChildItem -Path $SdkKitsRoot -Filter "makepri.exe" -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match "x64" } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1 -ExpandProperty FullName
+
 $SignToolPath = Get-ChildItem -Path $SdkKitsRoot -Filter "signtool.exe" -Recurse -ErrorAction SilentlyContinue |
     Where-Object { $_.FullName -match "x64" } |
     Sort-Object LastWriteTime -Descending |
@@ -43,6 +48,9 @@ if (-not $MakeAppxPath -or -not (Test-Path $MakeAppxPath)) {
 }
 
 Write-Host "[OK] Using MakeAppx : $MakeAppxPath" -ForegroundColor Green
+if ($MakePriPath) {
+    Write-Host "[OK] Using MakePri  : $MakePriPath" -ForegroundColor Green
+}
 if ($SignToolPath) {
     Write-Host "[OK] Using SignTool : $SignToolPath" -ForegroundColor Green
 }
@@ -80,7 +88,21 @@ if (Test-Path "$ProjectRoot\assets") {
     Copy-Item -Recurse "$ProjectRoot\assets" "$LayoutDir\assets"
 }
 
-# 4. Package with makeappx.exe
+# 4. Generate Package Resource Index (resources.pri) for Partner Center validation
+if ($MakePriPath) {
+    Write-Host "[PRI] Generating Package Resource Index (resources.pri)..." -ForegroundColor Yellow
+    $PriConfig = "$PackagingDir\priconfig.xml"
+    if (-not (Test-Path $PriConfig)) {
+        & $MakePriPath createconfig /cf "$PriConfig" /dq "en-US" /pv "10.0.0" /o | Out-Null
+    }
+    & $MakePriPath new /pr "$LayoutDir" /cf "$PriConfig" /mn "$LayoutDir\AppxManifest.xml" /of "$LayoutDir\resources.pri" /o
+    if ($LASTEXITCODE -ne 0) {
+        throw "makepri.exe failed with exit code $LASTEXITCODE"
+    }
+    Write-Host "[OK] resources.pri gerado com sucesso!" -ForegroundColor Green
+}
+
+# 5. Package with makeappx.exe
 $PackageName = "SpetATerm_0.0.5.0_x64.msix"
 $PackagePath = "$OutputDir\$PackageName"
 
