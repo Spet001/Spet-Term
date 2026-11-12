@@ -102,6 +102,10 @@ public:
             if (PathFileExistsW(candidateWin98.c_str())) return candidateWin98;
             std::wstring candidateSpet = std::wstring(exePath) + L"\\assets\\spet_sprites\\" + wname;
             if (PathFileExistsW(candidateSpet.c_str())) return candidateSpet;
+            std::wstring candidateWin98A = std::wstring(exePath) + L"\\Assets\\win98\\" + wname;
+            if (PathFileExistsW(candidateWin98A.c_str())) return candidateWin98A;
+            std::wstring candidateSpetA = std::wstring(exePath) + L"\\Assets\\spet_sprites\\" + wname;
+            if (PathFileExistsW(candidateSpetA.c_str())) return candidateSpetA;
         }
 
         // 2. Check relative to current working directory

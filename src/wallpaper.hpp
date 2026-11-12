@@ -129,12 +129,24 @@ inline std::vector<WallpaperItem> DiscoverWallpapers(const std::wstring& baseDir
 
     ScanDir(baseDir + L"\\assets\\wallpapers\\samples", true);
     if (result.empty()) {
+        ScanDir(baseDir + L"\\Assets\\wallpapers\\samples", true);
+    }
+    if (result.empty()) {
         ScanDir(L"assets\\wallpapers\\samples", true);
+    }
+    if (result.empty()) {
+        ScanDir(L"Assets\\wallpapers\\samples", true);
     }
 
     ScanDir(baseDir + L"\\assets\\wallpapers", false);
     if (result.empty()) {
+        ScanDir(baseDir + L"\\Assets\\wallpapers", false);
+    }
+    if (result.empty()) {
         ScanDir(L"assets\\wallpapers", false);
+    }
+    if (result.empty()) {
+        ScanDir(L"Assets\\wallpapers", false);
     }
 
     for (const auto& cw : customWallpapers) {

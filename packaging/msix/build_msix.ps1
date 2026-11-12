@@ -83,9 +83,9 @@ Copy-Item "$PackagingDir\AppxManifest.xml" "$LayoutDir\AppxManifest.xml"
 Copy-Item "$PackagingDir\Assets\*" "$LayoutDir\Assets\" -Recurse
 Copy-Item "$BinaryPath" "$LayoutDir\spetaterm.exe"
 
-# Copy runtime assets if available
+# Copy runtime assets directly into Assets directory
 if (Test-Path "$ProjectRoot\assets") {
-    Copy-Item -Recurse "$ProjectRoot\assets" "$LayoutDir\assets"
+    Copy-Item -Recurse "$ProjectRoot\assets\*" "$LayoutDir\Assets\"
 }
 
 # 4. Generate Package Resource Index (resources.pri) for Partner Center validation
