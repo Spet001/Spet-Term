@@ -30,7 +30,7 @@ struct AppSettings {
     bool systemCursor = true; // true = native Windows cursor, false = custom Direct2D cursor (experimental)
     bool warnMultiLinePaste = true; // true = security warning on multi-line batch paste
     bool onboardingCompleted = false;
-    std::string defaultStartupMode = "launcher"; // "launcher", "explorer", "pw", "cmd"
+    std::string defaultStartupMode = "pw"; // "pw", "cmd", "explorer", "launcher"
     bool explorerShowFolderSizes = false; // disabled by default so HDDs are fast
     bool explorerLinkCwd = true; // bidirectional CWD sync between split File Explorer and Terminal
     std::vector<SnippetItem> snippets;

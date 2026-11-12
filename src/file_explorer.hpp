@@ -131,6 +131,10 @@ inline void PopulateFallbackArchiveEntry(EntryT& entry, const std::wstring& path
         std::wstring base = (slash == std::wstring::npos) ? path : path.substr(slash + 1);
         entry.name = WideToUtf8(base);
     }
+    if constexpr (requires { entry.folder = path; }) {
+        size_t slash = path.find_last_of(L"/\\");
+        entry.folder = (slash == std::wstring::npos) ? L"" : path.substr(0, slash);
+    }
     if constexpr (requires { entry.offset = offset; }) {
         entry.offset = offset;
     }
@@ -241,7 +245,7 @@ inline bool TryQuickParseArchiveFromDisk(const std::wstring& archivePath, Archiv
         }
     }
 
-    // 3. Check ZIP / PK3 / PK4 / JAR / APK / OBB / IPA / BA2 / VPK End of Central Directory (EOCD)
+    // 3. Check ZIP / PK3 / PK4 / JAR / APK / OBB / IPA / BA2 / VPK / APPX End of Central Directory (EOCD)
     uint64_t tailSize = (std::min)(fileSize, static_cast<uint64_t>(65557));
     LARGE_INTEGER seekPos{};
     seekPos.QuadPart = static_cast<LONGLONG>(fileSize - tailSize);
@@ -260,29 +264,81 @@ inline bool TryQuickParseArchiveFromDisk(const std::wstring& archivePath, Archiv
             }
             if (eocdPos >= 0) {
                 const uint8_t* eocd = tail.data() + eocdPos;
-                uint16_t totalEntries = *reinterpret_cast<const uint16_t*>(eocd + 10);
-                uint32_t cdSize = *reinterpret_cast<const uint32_t*>(eocd + 12);
-                uint32_t cdOffset = *reinterpret_cast<const uint32_t*>(eocd + 16);
+                uint64_t totalEntries = *reinterpret_cast<const uint16_t*>(eocd + 10);
+                uint64_t cdSize = *reinterpret_cast<const uint32_t*>(eocd + 12);
+                uint64_t cdOffset = *reinterpret_cast<const uint32_t*>(eocd + 16);
+
+                // Zip64 Locator check
+                if (eocdPos >= 20) {
+                    const uint8_t* loc = tail.data() + (eocdPos - 20);
+                    if (loc[0] == 0x50 && loc[1] == 0x4B && loc[2] == 0x06 && loc[3] == 0x07) {
+                        uint64_t z64Ofs = *reinterpret_cast<const uint64_t*>(loc + 8);
+                        if (z64Ofs + 56 <= fileSize) {
+                            LARGE_INTEGER zSeek{};
+                            zSeek.QuadPart = static_cast<LONGLONG>(z64Ofs);
+                            SetFilePointerEx(hFile, zSeek, nullptr, FILE_BEGIN);
+                            uint8_t zBuf[56];
+                            DWORD zRead = 0;
+                            if (ReadFile(hFile, zBuf, 56, &zRead, nullptr) && zRead == 56 &&
+                                zBuf[0] == 0x50 && zBuf[1] == 0x4B && zBuf[2] == 0x06 && zBuf[3] == 0x06) {
+                                totalEntries = *reinterpret_cast<const uint64_t*>(zBuf + 32);
+                                cdSize = *reinterpret_cast<const uint64_t*>(zBuf + 40);
+                                cdOffset = *reinterpret_cast<const uint64_t*>(zBuf + 48);
+                            }
+                        }
+                    }
+                }
+
                 if (static_cast<uint64_t>(cdOffset) + cdSize <= fileSize && cdSize <= 64ULL * 1024 * 1024) {
                     seekPos.QuadPart = cdOffset;
                     SetFilePointerEx(hFile, seekPos, nullptr, FILE_BEGIN);
-                    std::vector<uint8_t> cdBuf(cdSize);
+                    std::vector<uint8_t> cdBuf(static_cast<size_t>(cdSize));
                     DWORD cdRead = 0;
-                    if (ReadFile(hFile, cdBuf.data(), cdSize, &cdRead, nullptr) && cdRead == cdSize) {
-                        outArchive.entries.reserve(totalEntries);
+                    if (ReadFile(hFile, cdBuf.data(), static_cast<DWORD>(cdSize), &cdRead, nullptr) && cdRead == cdSize) {
+                        outArchive.entries.reserve(static_cast<size_t>(totalEntries));
                         size_t pos = 0;
                         while (pos + 46 <= cdSize) {
                             const uint8_t* p = cdBuf.data() + pos;
                             if (p[0] != 0x50 || p[1] != 0x4B || p[2] != 0x01 || p[3] != 0x02) break;
-                            uint32_t compSize = *reinterpret_cast<const uint32_t*>(p + 20);
-                            uint32_t uncompSize = *reinterpret_cast<const uint32_t*>(p + 24);
+                            uint64_t compSize = *reinterpret_cast<const uint32_t*>(p + 20);
+                            uint64_t uncompSize = *reinterpret_cast<const uint32_t*>(p + 24);
                             uint16_t nameLen = *reinterpret_cast<const uint16_t*>(p + 28);
                             uint16_t extraLen = *reinterpret_cast<const uint16_t*>(p + 30);
                             uint16_t commentLen = *reinterpret_cast<const uint16_t*>(p + 32);
-                            uint32_t localHeaderOffset = *reinterpret_cast<const uint32_t*>(p + 42);
+                            uint64_t localHeaderOffset = *reinterpret_cast<const uint32_t*>(p + 42);
+
+                            // Parse Zip64 extra if needed
+                            if (extraLen >= 4 && pos + 46 + nameLen + extraLen <= cdSize) {
+                                size_t extraPos = pos + 46 + nameLen;
+                                size_t extraEnd = extraPos + extraLen;
+                                while (extraPos + 4 <= extraEnd) {
+                                    uint16_t tag = *reinterpret_cast<const uint16_t*>(cdBuf.data() + extraPos);
+                                    uint16_t tagSize = *reinterpret_cast<const uint16_t*>(cdBuf.data() + extraPos + 2);
+                                    extraPos += 4;
+                                    if (tag == 0x0001) {
+                                        size_t fOfs = extraPos;
+                                        if (uncompSize == 0xFFFFFFFFu && fOfs + 8 <= extraEnd) {
+                                            uncompSize = *reinterpret_cast<const uint64_t*>(cdBuf.data() + fOfs);
+                                            fOfs += 8;
+                                        }
+                                        if (compSize == 0xFFFFFFFFu && fOfs + 8 <= extraEnd) {
+                                            compSize = *reinterpret_cast<const uint64_t*>(cdBuf.data() + fOfs);
+                                            fOfs += 8;
+                                        }
+                                        if (localHeaderOffset == 0xFFFFFFFFu && fOfs + 8 <= extraEnd) {
+                                            localHeaderOffset = *reinterpret_cast<const uint64_t*>(cdBuf.data() + fOfs);
+                                            fOfs += 8;
+                                        }
+                                        break;
+                                    }
+                                    extraPos += (tagSize > 0) ? tagSize : 4;
+                                }
+                            }
+
                             if (pos + 46 + nameLen > cdSize) break;
                             std::string rawName(reinterpret_cast<const char*>(p + 46), nameLen);
                             std::wstring wPath = Utf8ToWide(rawName);
+                            if (wPath.empty()) wPath.assign(rawName.begin(), rawName.end());
                             bool isDir = !wPath.empty() && (wPath.back() == L'/' || wPath.back() == L'\\');
                             EntryT entry{};
                             PopulateFallbackArchiveEntry(entry, wPath, localHeaderOffset, compSize, uncompSize, isDir);
@@ -358,11 +414,17 @@ inline bool IsArchiveOrGameContainerExtension(std::wstring_view extWithOrWithout
         lower.insert(lower.begin(), L'.');
     }
 
+    if (lower.size() == 4 && lower[0] == L'.' && lower[1] == L'r' && iswdigit(lower[2]) && iswdigit(lower[3])) {
+        return true;
+    }
+
     static const std::unordered_set<std::wstring_view> kContainerExtensions = {
         // Standard Archives & Disk Images
         L".zip", L".rar", L".7z", L".tar", L".gz", L".tgz", L".bz2", L".xz", L".zst", L".cab", L".iso",
+        // Windows & Universal Packages
+        L".appx", L".appxbundle", L".msix", L".msixbundle",
         // Call of Duty / id Tech / Quake / Doom
-        L".ff", L".pak", L".iwd", L".xpak", L".ipak", L".wad", L".pk3", L".pk4",
+        L".ff", L".pak", L".iwd", L".xpak", L".ipak", L".wad", L".pk3", L".pk4", L".fd", L".bik", L".bk2",
         // Valve Source Engine
         L".vpk", L".gcf", L".bsp",
         // Ren'Py Visual Novel Engine
@@ -380,11 +442,12 @@ inline bool IsArchiveOrGameContainerExtension(std::wstring_view extWithOrWithout
         // Console ROMs & Containers
         L".nds", L".3ds", L".cia", L".rom", L".nes", L".sfc", L".smc", L".gba", L".gbc", L".gb",
         L".n64", L".z64", L".v64", L".chd", L".rvz", L".wbfs", L".gcm", L".cso", L".xex", L".xcp",
-        L".sarc", L".szs", L".wad",
-        // Unity / Mobile / CRI Middleware / Sony / Other Game Containers
+        L".sarc", L".szs", L".wad", L".god", L".bin", L".cue", L".mdf",
+        // Unity / Mobile / CRI Middleware / Sony / Xbox GDK / Other Game Containers
         L".unity3d", L".assets", L".bundle", L".obb", L".apk", L".jar",
         L".cpk", L".afs", L".awb", L".acb", L".psarc", L".hog", L".vp", L".grp",
-        L".rez", L".scs", L".erf", L".rim", L".bif", L".xp3", L".arc", L".nsa", L".sar", L".kpf", L".forge", L".ark"
+        L".rez", L".scs", L".erf", L".rim", L".bif", L".xp3", L".arc", L".nsa", L".sar", L".kpf", L".forge", L".ark",
+        L".msixvc", L".xvd", L".xvc"
     };
 
     return kContainerExtensions.find(lower) != kContainerExtensions.end();
@@ -1197,6 +1260,10 @@ public:
         if (coordinatorThread_.joinable()) {
             coordinatorThread_.join();
         }
+        {
+            std::lock_guard<std::mutex> lock(resultsMutex_);
+            matches_.clear();
+        }
         isSearching_.store(false, std::memory_order_release);
     }
 
@@ -1389,9 +1456,9 @@ struct FileExplorerPaneStateT {
 
             std::wstring shortDrive = root.substr(0, 2);
             if (!info.volumeLabel.empty()) {
-                info.displayName = shortDrive + L" " + info.volumeLabel + (info.isSSD ? L" [SSD]" : L" [HDD]");
+                info.displayName = shortDrive + L" (" + info.volumeLabel + L")";
             } else {
-                info.displayName = shortDrive + (info.isSSD ? L" [SSD]" : L" [HDD]");
+                info.displayName = shortDrive;
             }
 
             drives.push_back(std::move(info));
@@ -1522,6 +1589,8 @@ struct FileExplorerPaneStateT {
         virtualSubDir.clear();
         activeArchive.reset();
         currentDirectory = normDir;
+        filterQuery.clear();
+        searchFilter.clear();
 
         if (recordHistory) {
             if (historyIndex >= 0 && historyIndex + 1 < static_cast<int>(historyStack.size())) {
@@ -1624,11 +1693,15 @@ struct FileExplorerPaneStateT {
         if (folderSizeWorker) folderSizeWorker->Cancel();
 
         std::wstring normHost = NormalizeDiskDirectoryPath(archiveFileOnDisk);
+        if (searchEngine && recursiveSearchMode) searchEngine->Cancel();
+
         if constexpr (requires { sizeof(ArchiveT); }) {
             if (!preParsedArchive) {
                 if (inVirtualArchive && activeArchive && _wcsicmp(archiveHostPath.c_str(), normHost.c_str()) == 0) {
                     preParsedArchive = activeArchive;
                 } else {
+                    activeArchive.reset();
+                    fallbackArchive.reset();
                     preParsedArchive = detail::OpenOrParseArchive<ArchiveT>(normHost);
                 }
             }
@@ -1636,6 +1709,8 @@ struct FileExplorerPaneStateT {
             activeArchive = std::move(preParsedArchive);
         } else {
             if (!inVirtualArchive || !fallbackArchive || _wcsicmp(archiveHostPath.c_str(), normHost.c_str()) != 0) {
+                activeArchive.reset();
+                fallbackArchive.reset();
                 fallbackArchive = detail::OpenOrParseArchive<FallbackVirtualArchiveContainer>(normHost);
             }
             if (!fallbackArchive) return false;
@@ -1644,6 +1719,8 @@ struct FileExplorerPaneStateT {
         inVirtualArchive = true;
         archiveHostPath = normHost;
         virtualSubDir = NormalizeVirtualSubDir(targetVirtualSubDir);
+        filterQuery.clear();
+        searchFilter.clear();
 
         size_t lastSlash = archiveHostPath.find_last_of(L'\\');
         currentDirectory = (lastSlash != std::wstring::npos)
@@ -1793,6 +1870,9 @@ struct FileExplorerPaneStateT {
 
     // Navigate up (".."): if at root of virtual archive, exits VFS mode back to host filesystem directory
     bool NavigateUp() {
+        filterQuery.clear();
+        searchFilter.clear();
+        scrollOffsetY = 0.0f;
         if (inVirtualArchive) {
             if (virtualSubDir.empty()) {
                 std::wstring hostDir = currentDirectory;
@@ -1937,9 +2017,25 @@ struct FileExplorerPaneStateT {
 
     void SetFilterQuery(std::wstring_view query) {
         filterQuery = std::wstring(query);
-        RebuildVisibleFilterIndices();
-        if (recursiveSearchMode && searchEngine && !inVirtualArchive) {
-            searchEngine->StartSearch(currentDirectory, filterQuery);
+        searchFilter = filterQuery;
+        scrollOffsetY = 0.0f;
+        selectedVisibleIndex = 0;
+
+        if (filterQuery.empty()) {
+            if (searchEngine) {
+                searchEngine->Cancel();
+            }
+            if (inVirtualArchive) {
+                SynthesizeVirtualDirectoryEntries();
+                SortAndFilterEntries();
+            } else {
+                NavigateToDirectory(currentDirectory, false);
+            }
+        } else {
+            RebuildVisibleFilterIndices();
+            if (recursiveSearchMode && searchEngine && !inVirtualArchive) {
+                searchEngine->StartSearch(currentDirectory, filterQuery);
+            }
         }
     }
 
@@ -1951,6 +2047,22 @@ struct FileExplorerPaneStateT {
                 if (sortColumn == ExplorerSortColumn::Size) {
                     SortAndFilterEntries();
                 }
+                changed = true;
+            }
+        }
+        if (recursiveSearchMode && searchEngine && !inVirtualArchive && !filterQuery.empty()) {
+            auto matches = searchEngine->GetTopMatchesSnapshot(500);
+            if (!matches.empty()) {
+                ExplorerEntry parentEntry{};
+                bool hasParent = !entries.empty() && entries.front().isParentDirectoryEntry;
+                if (hasParent) parentEntry = entries.front();
+
+                entries.clear();
+                if (hasParent) entries.push_back(std::move(parentEntry));
+                for (auto& m : matches) {
+                    entries.push_back(std::move(m));
+                }
+                SortAndFilterEntries();
                 changed = true;
             }
         }
@@ -1983,10 +2095,14 @@ struct FileExplorerPaneStateT {
         return nullptr;
     }
 
-    std::vector<uint8_t> ExtractEntryToMemory(const ExplorerEntry& entry) const {
+    std::vector<uint8_t> ExtractEntryToMemory(const ExplorerEntry& entry, size_t maxCapBytes = 64 * 1024 * 1024) const {
         std::vector<uint8_t> data;
         if (inVirtualArchive && activeArchive && entry.virtualArchiveEntryIndex < activeArchive->entries.size()) {
-            ExtractArchiveEntryBytes(*activeArchive, activeArchive->entries[entry.virtualArchiveEntryIndex], data);
+            const auto& ae = activeArchive->entries[entry.virtualArchiveEntryIndex];
+            if (maxCapBytes > 0 && ae.uncompressedSize > maxCapBytes) {
+                return data;
+            }
+            ExtractArchiveEntryBytes(*activeArchive, ae, data);
         }
         return data;
     }

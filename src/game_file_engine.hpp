@@ -656,6 +656,117 @@ inline std::vector<uint8_t> StringToBytes(std::string_view s) {
 }
 
 // ============================================================================
+// DOOM WAD Default Palette & Picture / Sprite / Flat Decoders
+// ============================================================================
+inline const std::vector<uint8_t>& GetDefaultDoomPalette() {
+    static std::vector<uint8_t> pal;
+    if (pal.empty()) {
+        pal.resize(768);
+        for (int i = 0; i < 32; ++i) {
+            uint8_t v = static_cast<uint8_t>(i * 255 / 31);
+            pal[i * 3 + 0] = v; pal[i * 3 + 1] = v; pal[i * 3 + 2] = v;
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 32 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i + 1) * 255 / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i * 128) / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i * 64) / 32);
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 64 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i + 1) * 255 / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i + 1) * 200 / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i * 40) / 32);
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 96 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i * 80) / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i + 1) * 255 / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i * 60) / 32);
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 128 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i * 60) / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i * 120) / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i + 1) * 255 / 32);
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 160 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i + 1) * 230 / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i * 60) / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i + 1) * 240 / 32);
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 192 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i + 1) * 255 / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i + 1) * 190 / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i + 1) * 140 / 32);
+        }
+        for (int i = 0; i < 32; ++i) {
+            int idx = 224 + i;
+            pal[idx * 3 + 0] = static_cast<uint8_t>((i + 1) * 255 / 32);
+            pal[idx * 3 + 1] = static_cast<uint8_t>((i * 30) / 32);
+            pal[idx * 3 + 2] = static_cast<uint8_t>((i * 30) / 32);
+        }
+    }
+    return pal;
+}
+
+inline bool DecodeDoomPictureToRgba(std::span<const uint8_t> lump,
+                                    const std::vector<uint8_t>& playpal,
+                                    std::vector<uint8_t>& outRgba,
+                                    uint32_t& outW,
+                                    uint32_t& outH) {
+    if (lump.size() < 8) return false;
+    uint16_t width = static_cast<uint16_t>(lump[0]) | (static_cast<uint16_t>(lump[1]) << 8);
+    uint16_t height = static_cast<uint16_t>(lump[2]) | (static_cast<uint16_t>(lump[3]) << 8);
+    if (width == 0 || height == 0 || width > 4096 || height > 4096) return false;
+    if (lump.size() < 8 + static_cast<size_t>(width) * 4) return false;
+
+    std::vector<uint32_t> colOffsets(width);
+    for (uint16_t x = 0; x < width; ++x) {
+        size_t offIdx = 8 + static_cast<size_t>(x) * 4;
+        uint32_t ofs = static_cast<uint32_t>(lump[offIdx]) |
+                       (static_cast<uint32_t>(lump[offIdx + 1]) << 8) |
+                       (static_cast<uint32_t>(lump[offIdx + 2]) << 16) |
+                       (static_cast<uint32_t>(lump[offIdx + 3]) << 24);
+        if (ofs >= lump.size()) return false;
+        colOffsets[x] = ofs;
+    }
+
+    outW = width;
+    outH = height;
+    outRgba.assign(static_cast<size_t>(width) * height * 4, 0);
+
+    const uint8_t* pal = (playpal.size() >= 768) ? playpal.data() : GetDefaultDoomPalette().data();
+
+    for (uint16_t x = 0; x < width; ++x) {
+        size_t pos = colOffsets[x];
+        while (pos < lump.size()) {
+            uint8_t topDelta = lump[pos++];
+            if (topDelta == 0xFF) break;
+            if (pos >= lump.size()) break;
+            uint8_t length = lump[pos++];
+            if (pos >= lump.size()) break;
+            pos++; // dummy byte before data
+            for (uint8_t i = 0; i < length && pos < lump.size(); ++i) {
+                uint8_t palIdx = lump[pos++];
+                uint32_t y = static_cast<uint32_t>(topDelta) + i;
+                if (y < height) {
+                    size_t px = (static_cast<size_t>(y) * width + x) * 4;
+                    outRgba[px + 0] = pal[palIdx * 3 + 0];
+                    outRgba[px + 1] = pal[palIdx * 3 + 1];
+                    outRgba[px + 2] = pal[palIdx * 3 + 2];
+                    outRgba[px + 3] = 255;
+                }
+            }
+            if (pos < lump.size()) pos++; // dummy byte after data
+        }
+    }
+    return true;
+}
+
+// ============================================================================
 // 1. DOOM / Quake WAD (.wad: IWAD, PWAD, WAD2, WAD3)
 // ============================================================================
 inline void ParseWadArchive(const std::wstring& path, BinaryReader& r, ParsedGameArchive& arc) {
@@ -682,7 +793,8 @@ inline void ParseWadArchive(const std::wstring& path, BinaryReader& r, ParsedGam
         ToHexW(static_cast<uint32_t>(infoTableOfs)) + L" (" + std::to_wstring(infoTableOfs) + L" bytes)",
         L"Byte offset to start of lump directory array");
 
-    std::wstring currentMapGroup = L"(root)";
+    std::wstring currentSection = L"";
+    std::wstring currentMapGroup = L"";
     int32_t maxSafe = std::min<int32_t>(std::max<int32_t>(0, numLumps), 32768);
 
     for (int32_t i = 0; i < maxSafe; ++i) {
@@ -718,6 +830,18 @@ inline void ParseWadArchive(const std::wstring& path, BinaryReader& r, ParsedGam
             std::string upper = lumpName;
             for (char& c : upper) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
 
+            // 1. Detect Doom marker section bounds
+            if (upper == "S_START" || upper == "SS_START" || upper == "S1_START" || upper == "S2_START") { currentSection = L"sprites"; }
+            else if (upper == "S_END" || upper == "SS_END" || upper == "S1_END" || upper == "S2_END") { currentSection.clear(); }
+            else if (upper == "P_START" || upper == "PP_START" || upper == "P1_START" || upper == "P2_START" || upper == "P3_START") { currentSection = L"patches"; }
+            else if (upper == "P_END" || upper == "PP_END" || upper == "P1_END" || upper == "P2_END" || upper == "P3_END") { currentSection.clear(); }
+            else if (upper == "F_START" || upper == "FF_START" || upper == "F1_START" || upper == "F2_START" || upper == "F3_START") { currentSection = L"flats"; }
+            else if (upper == "F_END" || upper == "FF_END" || upper == "F1_END" || upper == "F2_END" || upper == "F3_END") { currentSection.clear(); }
+            else if (upper == "TX_START" || upper == "HI_START") { currentSection = L"textures"; }
+            else if (upper == "TX_END" || upper == "HI_END") { currentSection.clear(); }
+            else if (upper == "C_START") { currentSection = L"colormaps"; }
+            else if (upper == "C_END") { currentSection.clear(); }
+
             bool isMapMarker = (upper.size() == 4 && upper[0] == 'E' && std::isdigit(static_cast<unsigned char>(upper[1])) &&
                                 upper[2] == 'M' && std::isdigit(static_cast<unsigned char>(upper[3]))) ||
                                (upper.size() == 5 && upper.substr(0, 3) == "MAP" &&
@@ -725,17 +849,39 @@ inline void ParseWadArchive(const std::wstring& path, BinaryReader& r, ParsedGam
 
             bool isMapLump = (upper == "THINGS" || upper == "LINEDEFS" || upper == "SIDEDEFS" ||
                               upper == "VERTEXES" || upper == "SEGS" || upper == "SSECTORS" ||
-                              upper == "NODES" || upper == "SECTORS" || upper == "REJECT" || upper == "BLOCKMAP");
+                              upper == "NODES" || upper == "SECTORS" || upper == "REJECT" || upper == "BLOCKMAP" ||
+                              upper == "BEHAVIOR" || upper == "SCRIPTS" || upper == "GL_VERT" || upper == "GL_SEGS" ||
+                              upper == "GL_SSECT" || upper == "GL_NODES");
 
+            std::wstring folderName;
             if (isMapMarker) {
                 currentMapGroup = AsciiToWide(upper);
-            } else if (!isMapLump) {
-                if (upper == "PLAYPAL" || upper == "COLORMAP" || upper == "ENDOOM") {
-                    currentMapGroup = L"palettes_system";
+                folderName = L"maps/" + currentMapGroup;
+            } else if (isMapLump && !currentMapGroup.empty()) {
+                folderName = L"maps/" + currentMapGroup;
+            } else {
+                currentMapGroup.clear();
+                if (!currentSection.empty()) {
+                    folderName = currentSection;
+                } else if (upper.rfind("DS", 0) == 0 || upper.rfind("DP", 0) == 0) {
+                    folderName = L"sounds";
+                } else if (upper.rfind("D_", 0) == 0) {
+                    folderName = L"music";
+                } else if (upper.rfind("M_", 0) == 0) {
+                    folderName = L"graphics/menu";
+                } else if (upper.rfind("ST", 0) == 0) {
+                    folderName = L"graphics/statusbar";
+                } else if (upper == "PLAYPAL" || upper == "COLORMAP" || upper == "ENDOOM") {
+                    folderName = L"palettes_system";
+                } else if (upper == "TEXTURE1" || upper == "TEXTURE2" || upper == "PNAMES") {
+                    folderName = L"textures";
+                } else if (upper == "TITLEPIC" || upper == "INTERPIC" || upper == "HELP" ||
+                           upper == "CREDITS" || upper == "BOSSBACK" || upper == "VICTORY2" || upper == "WIMAP0") {
+                    folderName = L"graphics";
                 } else if (size == 4096) {
-                    currentMapGroup = L"flats";
+                    folderName = L"flats";
                 } else {
-                    currentMapGroup = L"lumps";
+                    folderName = L"lumps";
                 }
             }
 
@@ -747,8 +893,8 @@ inline void ParseWadArchive(const std::wstring& path, BinaryReader& r, ParsedGam
             std::wstring wName = AsciiToWide(lumpName);
             ArchiveEntry e;
             e.name = wName;
-            e.folder = currentMapGroup;
-            e.path = (currentMapGroup == L"(root)") ? wName : (currentMapGroup + L"/" + wName);
+            e.folder = folderName;
+            e.path = folderName.empty() ? wName : (folderName + L"/" + wName);
             e.offset = filePos;
             e.compressedSize = size;
             e.uncompressedSize = size;
@@ -758,6 +904,9 @@ inline void ParseWadArchive(const std::wstring& path, BinaryReader& r, ParsedGam
             e.customFlags = ExtractMode::Stored;
             arc.entries.push_back(std::move(e));
         }
+    }
+    if (arc.doomPlaypal.empty()) {
+        arc.doomPlaypal = GetDefaultDoomPalette();
     }
 }
 
@@ -977,8 +1126,9 @@ inline void ParseZipFamilyArchive(
 
     // Locate End of Central Directory (EOCD: 0x06054B50) near end of file
     size_t eocdPos = std::string::npos;
-    size_t searchStart = (r.size() > 65557) ? (r.size() - 65557) : 0;
+    size_t searchSpan = (r.size() > 131072) ? 131072 : r.size();
     if (r.size() >= 22) {
+        size_t searchStart = r.size() - searchSpan;
         for (size_t i = r.size() - 22; ; --i) {
             if (r.read_le<uint32_t>(i) == 0x06054B50u) {
                 eocdPos = i;
@@ -988,26 +1138,77 @@ inline void ParseZipFamilyArchive(
         }
     }
 
-    if (eocdPos != std::string::npos) {
-        uint16_t cdCount = r.read_le<uint16_t>(eocdPos + 10);
-        uint32_t cdSize = r.read_le<uint32_t>(eocdPos + 12);
-        uint32_t cdOffset = r.read_le<uint32_t>(eocdPos + 16);
-        (void)cdSize;
+    uint64_t cdCount = 0;
+    uint64_t cdSize = 0;
+    uint64_t cdOffset = 0;
+    bool foundCd = false;
 
-        size_t pos = cdOffset;
-        for (uint16_t i = 0; i < cdCount && pos + 46 <= r.size(); ++i) {
+    if (eocdPos != std::string::npos) {
+        cdCount = r.read_le<uint16_t>(eocdPos + 10);
+        cdSize = r.read_le<uint32_t>(eocdPos + 12);
+        cdOffset = r.read_le<uint32_t>(eocdPos + 16);
+        foundCd = true;
+
+        // Check for Zip64 Locator (0x07064B50): within 64 bytes before EOCD
+        size_t locSearchLimit = (eocdPos >= 64) ? (eocdPos - 64) : 0;
+        for (size_t p = (eocdPos >= 20) ? (eocdPos - 20) : 0; p >= locSearchLimit && p + 20 <= eocdPos; --p) {
+            if (r.read_le<uint32_t>(p) == 0x07064B50u) {
+                uint64_t z64EocdOfs = r.read_le<uint64_t>(p + 8);
+                if (z64EocdOfs + 56 <= r.size() && r.read_le<uint32_t>(static_cast<size_t>(z64EocdOfs)) == 0x06064B50u) {
+                    cdCount = r.read_le<uint64_t>(static_cast<size_t>(z64EocdOfs + 32));
+                    cdSize = r.read_le<uint64_t>(static_cast<size_t>(z64EocdOfs + 40));
+                    cdOffset = r.read_le<uint64_t>(static_cast<size_t>(z64EocdOfs + 48));
+                }
+                break;
+            }
+            if (p == 0) break;
+        }
+    }
+
+    if (foundCd && cdOffset < r.size()) {
+        size_t pos = static_cast<size_t>(cdOffset);
+        for (uint64_t i = 0; i < cdCount && pos + 46 <= r.size(); ++i) {
             if (r.read_le<uint32_t>(pos) != 0x02014B50u) break;
 
             uint16_t method = r.read_le<uint16_t>(pos + 10);
             uint32_t crc = r.read_le<uint32_t>(pos + 16);
-            uint32_t compSize = r.read_le<uint32_t>(pos + 20);
-            uint32_t uncompSize = r.read_le<uint32_t>(pos + 24);
+            uint64_t compSize = r.read_le<uint32_t>(pos + 20);
+            uint64_t uncompSize = r.read_le<uint32_t>(pos + 24);
             uint16_t nameLen = r.read_le<uint16_t>(pos + 28);
             uint16_t extraLen = r.read_le<uint16_t>(pos + 30);
             uint16_t commentLen = r.read_le<uint16_t>(pos + 32);
-            uint32_t localHdrOfs = r.read_le<uint32_t>(pos + 42);
+            uint64_t localHdrOfs = r.read_le<uint32_t>(pos + 42);
 
             std::string rawName = r.read_ascii(pos + 46, nameLen, false);
+
+            // Parse extra fields (including Zip64 0x0001)
+            if (extraLen >= 4 && pos + 46 + nameLen + extraLen <= r.size()) {
+                size_t extraPos = pos + 46 + nameLen;
+                size_t extraEnd = extraPos + extraLen;
+                while (extraPos + 4 <= extraEnd) {
+                    uint16_t tag = r.read_le<uint16_t>(extraPos);
+                    uint16_t tagSize = r.read_le<uint16_t>(extraPos + 2);
+                    extraPos += 4;
+                    if (tag == 0x0001) {
+                        size_t fOfs = extraPos;
+                        if (uncompSize == 0xFFFFFFFFu && fOfs + 8 <= extraEnd) {
+                            uncompSize = r.read_le<uint64_t>(fOfs);
+                            fOfs += 8;
+                        }
+                        if (compSize == 0xFFFFFFFFu && fOfs + 8 <= extraEnd) {
+                            compSize = r.read_le<uint64_t>(fOfs);
+                            fOfs += 8;
+                        }
+                        if (localHdrOfs == 0xFFFFFFFFu && fOfs + 8 <= extraEnd) {
+                            localHdrOfs = r.read_le<uint64_t>(fOfs);
+                            fOfs += 8;
+                        }
+                        break;
+                    }
+                    extraPos += (tagSize > 0) ? tagSize : 4;
+                }
+            }
+
             pos += 46 + nameLen + extraLen + commentLen;
 
             if (rawName.empty() || (rawName.back() == '/' && uncompSize == 0)) {
@@ -1016,13 +1217,15 @@ inline void ParseZipFamilyArchive(
 
             // Compute data offset from Local File Header (0x04034B50)
             uint64_t dataOfs = localHdrOfs + 30;
-            if (localHdrOfs + 30 <= r.size() && r.read_le<uint32_t>(localHdrOfs) == 0x04034B50u) {
-                uint16_t lNameLen = r.read_le<uint16_t>(localHdrOfs + 26);
-                uint16_t lExtraLen = r.read_le<uint16_t>(localHdrOfs + 28);
-                dataOfs = static_cast<uint64_t>(localHdrOfs) + 30 + lNameLen + lExtraLen;
+            if (localHdrOfs + 30 <= r.size() && r.read_le<uint32_t>(static_cast<size_t>(localHdrOfs)) == 0x04034B50u) {
+                uint16_t lNameLen = r.read_le<uint16_t>(static_cast<size_t>(localHdrOfs + 26));
+                uint16_t lExtraLen = r.read_le<uint16_t>(static_cast<size_t>(localHdrOfs + 28));
+                dataOfs = localHdrOfs + 30 + lNameLen + lExtraLen;
             }
 
-            auto sp = SplitVirtualPath(AsciiToWide(rawName));
+            std::wstring wName = Utf8ToWide(rawName);
+            if (wName.empty()) wName = AsciiToWide(rawName);
+            auto sp = SplitVirtualPath(wName);
             ArchiveEntry e;
             e.name = sp.name;
             e.path = sp.cleanPath;
@@ -1176,7 +1379,7 @@ inline void ParseZipFamilyArchive(
 }
 
 // ============================================================================
-// 5. RAR v4 & v5 Block Walker (.rar)
+// 5. RAR v4 & v5 Multi-Volume Block Walker & Encrypted Archive Inspector (.rar)
 // ============================================================================
 inline uint64_t ReadRar5Vint(BinaryReader& r, size_t& pos) {
     uint64_t result = 0;
@@ -1190,63 +1393,131 @@ inline uint64_t ReadRar5Vint(BinaryReader& r, size_t& pos) {
     return result;
 }
 
-inline void ParseRarArchive(const std::wstring& path, BinaryReader& r, ParsedGameArchive& arc) {
-    bool isRar5 = (r.size() >= 8 && r[6] == 0x01 && r[7] == 0x00);
-    arc.valid = true;
-    arc.formatId = ArchiveFormatId::RAR;
-    arc.formatName = isRar5 ? L"RAR v5.0 Archive Container" : L"RAR v4.x Archive Container";
-    arc.engineName = L"Roshal Archive (Game Mod / Distribution Package)";
-    arc.isLittleEndian = true;
-    arc.supportsRepack = false;
+struct RarVolumeSibling {
+    uint32_t volumeNumber = 1;
+    std::wstring path;
+    uint64_t fileSize = 0;
+};
 
-    if (!isRar5) {
-        size_t pos = 7;
-        size_t idx = 0;
-        while (pos + 7 <= r.size() && idx < 4096) {
-            uint8_t headType = r[pos + 2];
-            uint16_t headFlags = r.read_le<uint16_t>(pos + 3);
-            uint16_t headSize = r.read_le<uint16_t>(pos + 5);
-            if (headSize < 7 || pos + headSize > r.size()) break;
+inline std::vector<RarVolumeSibling> FindRarVolumeSiblings(const std::wstring& filePath) {
+    std::vector<RarVolumeSibling> siblings;
+    size_t lastSlash = filePath.find_last_of(L"\\/");
+    std::wstring dir = (lastSlash == std::wstring::npos) ? L"." : filePath.substr(0, lastSlash);
+    std::wstring fileName = (lastSlash == std::wstring::npos) ? filePath : filePath.substr(lastSlash + 1);
+    std::wstring lowerName = ToLowerW(fileName);
 
-            uint32_t addSize = 0;
-            if ((headFlags & 0x8000) != 0 && pos + 11 <= r.size()) {
-                addSize = r.read_le<uint32_t>(pos + 7);
-            }
+    // Case A: Standard WinRAR multi-part (.part1.rar, .part01.rar, etc.)
+    size_t partPos = lowerName.rfind(L".part");
+    if (partPos != std::wstring::npos && EndsWithW(lowerName, L".rar")) {
+        std::wstring prefix = fileName.substr(0, partPos + 5); // e.g. "Game.part"
+        std::wstring searchPattern = dir + L"\\" + prefix + L"*.rar";
 
-            if (headType == 0x74 && pos + 32 <= r.size()) {
-                uint32_t packSize = r.read_le<uint32_t>(pos + 7);
-                uint32_t unpSize = r.read_le<uint32_t>(pos + 11);
-                uint32_t fileCrc = r.read_le<uint32_t>(pos + 16);
-                uint8_t method = r[pos + 25];
-                uint16_t nameSize = r.read_le<uint16_t>(pos + 26);
-                size_t maxName = (headSize > 32) ? std::min<size_t>(nameSize, headSize - 32) : 0;
-                std::string rawName = r.read_ascii(pos + 32, maxName, true);
-                size_t dataOffset = pos + headSize;
-
-                auto sp = SplitVirtualPath(AsciiToWide(rawName.empty() ? ("rar_entry_" + std::to_string(idx) + ".bin") : rawName));
-                ArchiveEntry e;
-                e.name = sp.name;
-                e.path = sp.cleanPath;
-                e.folder = sp.folder;
-                e.offset = dataOffset;
-                e.compressedSize = packSize;
-                e.uncompressedSize = unpSize;
-                e.compressionMethod = (method == 0x30) ? L"RAR v4 Store (0x30)" : (L"RAR v4 Method " + ToHexW(method, 2));
-                e.crc32 = fileCrc;
-                e.category = ClassifyAsset(sp.cleanPath, r.slice(dataOffset, std::min<size_t>(packSize, 256)));
-                e.customFlags = ExtractMode::Stored;
-                arc.entries.push_back(std::move(e));
-
-                pos = dataOffset + packSize;
-                ++idx;
-                continue;
-            }
-            pos += headSize + addSize;
+        WIN32_FIND_DATAW ffd{};
+        HANDLE hFind = FindFirstFileExW(searchPattern.c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+                    std::wstring fName = ffd.cFileName;
+                    std::wstring fLower = ToLowerW(fName);
+                    if (EndsWithW(fLower, L".rar") && fLower.rfind(ToLowerW(prefix), 0) == 0) {
+                        size_t numStart = prefix.size();
+                        size_t numLen = fName.size() - numStart - 4; // exclude ".rar"
+                        std::wstring numStr = fName.substr(numStart, numLen);
+                        bool allDigits = !numStr.empty();
+                        for (wchar_t c : numStr) {
+                            if (!iswdigit(c)) { allDigits = false; break; }
+                        }
+                        if (allDigits) {
+                            RarVolumeSibling sib;
+                            sib.volumeNumber = static_cast<uint32_t>(_wtoi(numStr.c_str()));
+                            sib.path = dir + L"\\" + fName;
+                            sib.fileSize = (static_cast<uint64_t>(ffd.nFileSizeHigh) << 32) | ffd.nFileSizeLow;
+                            siblings.push_back(std::move(sib));
+                        }
+                    }
+                }
+            } while (FindNextFileW(hFind, &ffd));
+            FindClose(hFind);
         }
+    }
+
+    // Case B: Classic RAR multi-part naming (.rar, .r00, .r01, .r02...)
+    if (siblings.empty()) {
+        bool isOldNaming = false;
+        std::wstring basePrefix;
+        if (EndsWithW(lowerName, L".rar")) {
+            basePrefix = fileName.substr(0, fileName.size() - 4);
+            isOldNaming = true;
+        } else if (lowerName.size() >= 4 && lowerName[lowerName.size() - 4] == L'.' && lowerName[lowerName.size() - 3] == L'r' &&
+                   iswdigit(lowerName[lowerName.size() - 2]) && iswdigit(lowerName[lowerName.size() - 1])) {
+            basePrefix = fileName.substr(0, fileName.size() - 4);
+            isOldNaming = true;
+        }
+
+        if (isOldNaming && !basePrefix.empty()) {
+            std::wstring searchPattern = dir + L"\\" + basePrefix + L".r*";
+            WIN32_FIND_DATAW ffd{};
+            HANDLE hFind = FindFirstFileExW(searchPattern.c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+            if (hFind != INVALID_HANDLE_VALUE) {
+                do {
+                    if ((ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+                        std::wstring fName = ffd.cFileName;
+                        std::wstring fLower = ToLowerW(fName);
+                        std::wstring expectedBase = ToLowerW(basePrefix);
+                        if (fLower.rfind(expectedBase, 0) == 0) {
+                            std::wstring ext = fLower.substr(expectedBase.size());
+                            uint32_t volNum = 0;
+                            if (ext == L".rar") {
+                                volNum = 1;
+                            } else if (ext.size() == 4 && ext[0] == L'.' && ext[1] == L'r' && iswdigit(ext[2]) && iswdigit(ext[3])) {
+                                volNum = static_cast<uint32_t>(_wtoi(ext.c_str() + 2)) + 2;
+                            }
+                            if (volNum > 0) {
+                                RarVolumeSibling sib;
+                                sib.volumeNumber = volNum;
+                                sib.path = dir + L"\\" + fName;
+                                sib.fileSize = (static_cast<uint64_t>(ffd.nFileSizeHigh) << 32) | ffd.nFileSizeLow;
+                                siblings.push_back(std::move(sib));
+                            }
+                        }
+                    }
+                } while (FindNextFileW(hFind, &ffd));
+                FindClose(hFind);
+            }
+        }
+    }
+
+    if (siblings.empty()) {
+        RarVolumeSibling self;
+        self.volumeNumber = 1;
+        self.path = filePath;
+        WIN32_FILE_ATTRIBUTE_DATA fad{};
+        if (GetFileAttributesExW(filePath.c_str(), GetFileExInfoStandard, &fad)) {
+            self.fileSize = (static_cast<uint64_t>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
+        }
+        siblings.push_back(std::move(self));
     } else {
+        std::sort(siblings.begin(), siblings.end(), [](const RarVolumeSibling& a, const RarVolumeSibling& b) {
+            return a.volumeNumber < b.volumeNumber;
+        });
+    }
+
+    return siblings;
+}
+
+inline bool ParseRarVolumeBlockEntries(BinaryReader& r, uint32_t volNumber,
+                                      bool& outIsEncrypted, std::string& outSaltHex, uint8_t& outKdfCount,
+                                      std::unordered_map<std::wstring, size_t>& pathMap,
+                                      std::vector<ArchiveEntry>& entries) {
+    bool isRar5 = (r.size() >= 8 && r[0] == 0x52 && r[1] == 0x61 && r[2] == 0x72 && r[3] == 0x21 &&
+                   r[4] == 0x1A && r[5] == 0x07 && r[6] == 0x01 && r[7] == 0x00);
+    bool isRar4 = (r.size() >= 7 && r[0] == 0x52 && r[1] == 0x61 && r[2] == 0x72 && r[3] == 0x21 &&
+                   r[4] == 0x1A && r[5] == 0x07 && r[6] == 0x00);
+
+    if (isRar5) {
         size_t pos = 8;
         size_t idx = 0;
-        while (pos + 7 <= r.size() && idx < 4096) {
+        while (pos + 7 <= r.size() && idx < 8192) {
             pos += 4; // header CRC32
             uint64_t hdrSize = ReadRar5Vint(r, pos);
             if (hdrSize == 0 || pos + hdrSize > r.size()) break;
@@ -1259,11 +1530,45 @@ inline void ParseRarArchive(const std::wstring& path, BinaryReader& r, ParsedGam
             uint64_t dataSize = ((hdrFlags & 0x02) != 0) ? ReadRar5Vint(r, pos) : 0;
             (void)extraSize;
 
-            if (hdrType == 2 && pos < hdrEnd) { // File header
+            // Block Type 4: Archive Encryption Header (WinRAR -hp / Encrypt File Names)
+            if (hdrType == 4) {
+                outIsEncrypted = true;
+                uint64_t encVer = ReadRar5Vint(r, pos);
+                uint64_t encFlags = ReadRar5Vint(r, pos);
+                (void)encVer; (void)encFlags;
+                outKdfCount = (pos < hdrEnd) ? r[pos++] : 15;
+                outSaltHex.clear();
+                for (size_t s = 0; s < 16 && pos < hdrEnd; ++s) {
+                    char hexBuf[4]{};
+                    snprintf(hexBuf, sizeof(hexBuf), "%02X", r[pos++]);
+                    outSaltHex += hexBuf;
+                }
+                return true;
+            }
+
+            // Block Type 1: Main Archive Header
+            if (hdrType == 1) {
+                uint64_t arcFlags = ReadRar5Vint(r, pos);
+                if ((arcFlags & 0x02) != 0 && pos < hdrEnd) {
+                    ReadRar5Vint(r, pos); // volume number for split sets
+                }
+                pos = hdrEnd + static_cast<size_t>(dataSize);
+                continue;
+            }
+
+            // Block Type 2: File Header
+            if (hdrType == 2 && pos < hdrEnd) {
                 uint64_t fileFlags = ReadRar5Vint(r, pos);
-                uint64_t unpSize = ReadRar5Vint(r, pos);
+                uint64_t unpSize = 0;
+                if ((fileFlags & 0x08) == 0) {
+                    unpSize = ReadRar5Vint(r, pos);
+                } else {
+                    unpSize = dataSize;
+                }
                 uint64_t attrs = ReadRar5Vint(r, pos);
                 (void)attrs;
+                bool isDir = ((fileFlags & 0x01) != 0);
+
                 if ((fileFlags & 0x02) != 0 && pos + 4 <= hdrEnd) pos += 4; // mtime
                 uint32_t fileCrc = 0;
                 if ((fileFlags & 0x04) != 0 && pos + 4 <= hdrEnd) {
@@ -1279,30 +1584,259 @@ inline void ParseRarArchive(const std::wstring& path, BinaryReader& r, ParsedGam
                     rawName = r.read_ascii(pos, static_cast<size_t>(nameLen), false);
                 }
 
-                if ((fileFlags & 0x01) == 0) { // not a directory
-                    auto sp = SplitVirtualPath(AsciiToWide(rawName.empty() ? ("rar5_entry_" + std::to_string(idx) + ".bin") : rawName));
+                std::wstring wPath = Utf8ToWide(rawName);
+                if (wPath.empty()) wPath = AsciiToWide(rawName.empty() ? ("rar5_entry_" + std::to_string(idx) + ".bin") : rawName);
+                auto sp = SplitVirtualPath(wPath);
+
+                auto it = pathMap.find(sp.cleanPath);
+                if (it != pathMap.end()) {
+                    auto& existing = entries[it->second];
+                    existing.compressedSize += dataSize;
+                    if (existing.uncompressedSize == 0 && unpSize > 0) existing.uncompressedSize = unpSize;
+                    existing.compressionMethod = L"RAR v5 Split Volume";
+                } else {
                     ArchiveEntry e;
                     e.name = sp.name;
-                    e.path = sp.cleanPath;
+                    e.path = isDir ? (sp.cleanPath + L"/") : sp.cleanPath;
                     e.folder = sp.folder;
                     e.offset = hdrEnd;
-                    e.compressedSize = dataSize;
-                    e.uncompressedSize = unpSize;
+                    e.compressedSize = isDir ? 0 : dataSize;
+                    e.uncompressedSize = isDir ? 0 : (unpSize ? unpSize : dataSize);
                     uint64_t method = (compInfo >> 7) & 0x07;
-                    e.compressionMethod = (method == 0) ? L"RAR v5 Store" : (L"RAR v5 Method " + std::to_wstring(method));
+                    e.compressionMethod = isDir ? L"Directory" : ((method == 0) ? L"RAR v5 Store" : (L"RAR v5 Method " + std::to_wstring(method)));
                     e.crc32 = fileCrc;
-                    e.category = ClassifyAsset(sp.cleanPath, r.slice(hdrEnd, std::min<size_t>(static_cast<size_t>(dataSize), 256)));
-                    e.customFlags = ExtractMode::Stored;
-                    arc.entries.push_back(std::move(e));
+                    e.category = isDir ? AssetCategory::Folder : ClassifyAsset(sp.cleanPath, r.slice(hdrEnd, std::min<size_t>(static_cast<size_t>(dataSize), 256)));
+                    e.customFlags = ExtractMode::Stored | ((volNumber & 0xFF) << 8);
+                    pathMap[sp.cleanPath] = entries.size();
+                    entries.push_back(std::move(e));
                     ++idx;
                 }
             }
-            pos = hdrStart + static_cast<size_t>(hdrSize) + static_cast<size_t>(dataSize);
+
+            // Block Type 5: End of Archive Header
+            if (hdrType == 5) break;
+
+            if (hdrEnd + dataSize > r.size()) {
+                dataSize = (r.size() > hdrEnd) ? (r.size() - hdrEnd) : 0;
+            }
+            pos = hdrEnd + static_cast<size_t>(dataSize);
+        }
+    } else if (isRar4) {
+        size_t pos = 7;
+        size_t idx = 0;
+        while (pos + 7 <= r.size() && idx < 8192) {
+            uint8_t headType = r[pos + 2];
+            uint16_t headFlags = r.read_le<uint16_t>(pos + 3);
+            uint16_t headSize = r.read_le<uint16_t>(pos + 5);
+            if (headSize < 7 || pos + headSize > r.size()) break;
+
+            if (headType == 0x73 && (headFlags & 0x0080) != 0) {
+                outIsEncrypted = true;
+            }
+
+            uint32_t addSize = 0;
+            if ((headFlags & 0x8000) != 0 && pos + 11 <= r.size()) {
+                addSize = r.read_le<uint32_t>(pos + 7);
+            }
+
+            if (headType == 0x74 && pos + 32 <= r.size()) {
+                uint64_t packSize = r.read_le<uint32_t>(pos + 7);
+                uint64_t unpSize = r.read_le<uint32_t>(pos + 11);
+                uint32_t fileCrc = r.read_le<uint32_t>(pos + 16);
+                uint8_t method = r[pos + 25];
+                uint16_t nameSize = r.read_le<uint16_t>(pos + 26);
+                uint32_t attr = r.read_le<uint32_t>(pos + 28);
+                bool isDir = ((headFlags & 0x00E0) == 0x00E0) || ((attr & 0x10) != 0);
+
+                size_t nameOffset = pos + 32;
+                if ((headFlags & 0x0100) != 0 && pos + 40 <= r.size()) {
+                    uint32_t highPack = r.read_le<uint32_t>(pos + 32);
+                    uint32_t highUnp = r.read_le<uint32_t>(pos + 36);
+                    packSize |= (static_cast<uint64_t>(highPack) << 32);
+                    unpSize |= (static_cast<uint64_t>(highUnp) << 32);
+                    nameOffset = pos + 40;
+                }
+                size_t maxName = (nameOffset < pos + headSize) ? std::min<size_t>(nameSize, (pos + headSize) - nameOffset) : 0;
+                std::string rawName = r.read_ascii(nameOffset, maxName, true);
+                size_t dataOffset = pos + headSize;
+
+                if (isDir || (headFlags & 0x8000) == 0) {
+                    packSize = 0;
+                }
+                if (dataOffset + packSize > r.size()) {
+                    packSize = (r.size() > dataOffset) ? (r.size() - dataOffset) : 0;
+                }
+
+                std::wstring wPath = Utf8ToWide(rawName);
+                if (wPath.empty()) wPath = AsciiToWide(rawName.empty() ? ("rar_entry_" + std::to_string(idx) + ".bin") : rawName);
+                auto sp = SplitVirtualPath(wPath);
+
+                auto it = pathMap.find(sp.cleanPath);
+                if (it != pathMap.end()) {
+                    auto& existing = entries[it->second];
+                    existing.compressedSize += packSize;
+                    if (existing.uncompressedSize == 0 && unpSize > 0) existing.uncompressedSize = unpSize;
+                    existing.compressionMethod = L"RAR v4 Split Volume";
+                } else {
+                    ArchiveEntry e;
+                    e.name = sp.name;
+                    e.path = isDir ? (sp.cleanPath + L"/") : sp.cleanPath;
+                    e.folder = sp.folder;
+                    e.offset = dataOffset;
+                    e.compressedSize = packSize;
+                    e.uncompressedSize = isDir ? 0 : (unpSize ? unpSize : packSize);
+                    e.compressionMethod = isDir ? L"Directory" : ((method == 0x30) ? L"RAR v4 Store (0x30)" : (L"RAR v4 Method " + ToHexW(method, 2)));
+                    e.crc32 = fileCrc;
+                    e.category = isDir ? AssetCategory::Folder : ClassifyAsset(sp.cleanPath, r.slice(dataOffset, std::min<size_t>(static_cast<size_t>(packSize), 256)));
+                    e.customFlags = ExtractMode::Stored | ((volNumber & 0xFF) << 8);
+                    pathMap[sp.cleanPath] = entries.size();
+                    entries.push_back(std::move(e));
+                    ++idx;
+                }
+
+                pos = dataOffset + static_cast<size_t>(packSize);
+                continue;
+            }
+            pos += headSize + addSize;
+        }
+    }
+    return true;
+}
+
+inline void ParseRarArchive(const std::wstring& path, BinaryReader& r, ParsedGameArchive& arc) {
+    bool isRar5 = (r.size() >= 8 && r[0] == 0x52 && r[1] == 0x61 && r[2] == 0x72 && r[3] == 0x21 &&
+                   r[4] == 0x1A && r[5] == 0x07 && r[6] == 0x01 && r[7] == 0x00);
+    arc.valid = true;
+    arc.formatId = ArchiveFormatId::RAR;
+    arc.formatName = isRar5 ? L"RAR v5.0 Archive Container" : L"RAR v4.x Archive Container";
+    arc.engineName = L"Roshal Archive (Game Mod / Distribution Package)";
+    arc.isLittleEndian = true;
+    arc.supportsRepack = false;
+
+    // Discover sibling volumes in directory (.part1.rar, .part2.rar, etc.)
+    auto siblings = FindRarVolumeSiblings(path);
+    uint32_t activeVolNum = 1;
+    for (const auto& s : siblings) {
+        if (_wcsicmp(s.path.c_str(), path.c_str()) == 0) {
+            activeVolNum = s.volumeNumber;
+            break;
+        }
+    }
+
+    bool isEncrypted = false;
+    std::string saltHex;
+    uint8_t kdfCount = 15;
+    std::unordered_map<std::wstring, size_t> pathMap;
+
+    // Parse active volume first
+    ParseRarVolumeBlockEntries(r, activeVolNum, isEncrypted, saltHex, kdfCount, pathMap, arc.entries);
+
+    // If active volume is header-encrypted (WinRAR -hp / AES-256)
+    if (isEncrypted) {
+        arc.formatName = isRar5 ? L"RAR v5.0 Encrypted Archive (AES-256)" : L"RAR v4.x Encrypted Archive";
+        arc.engineName = L"Roshal Archive (WinRAR -hp Header Encryption)";
+
+        uint64_t totalVolumeBytes = 0;
+        for (const auto& s : siblings) totalVolumeBytes += s.fileSize;
+
+        size_t lastSlash = path.find_last_of(L"\\/");
+        std::wstring fileName = (lastSlash == std::wstring::npos) ? path : path.substr(lastSlash + 1);
+
+        std::string notice;
+        notice += "================================================================================\n";
+        notice += "SPET@TERM SECURE ARCHIVE EXPLORER - ENCRYPTED ARCHIVE NOTICE\n";
+        notice += "================================================================================\n\n";
+        notice += "Archive File          : " + WideToUtf8(fileName) + "\n";
+        notice += "Format Architecture   : " + WideToUtf8(arc.formatName) + "\n";
+        notice += "Encryption Standard   : AES-256 (Cipher Block Chaining - CBC)\n";
+        notice += "Key Derivation        : PBKDF2-HMAC-SHA256 (" + std::to_string(1ULL << kdfCount) + " iterations)\n";
+        if (!saltHex.empty()) {
+            notice += "Salt (Hex)            : 0x" + saltHex + "\n";
+        }
+        notice += "Header Protection     : ACTIVE (WinRAR -hp / Encrypt file names enabled)\n";
+        notice += "Discovered Volumes    : " + std::to_string(siblings.size()) + " part(s) (" + WideToUtf8(FormatBytesW(totalVolumeBytes)) + " total)\n\n";
+
+        notice += "VOLUME SET BREAKDOWN:\n";
+        for (const auto& s : siblings) {
+            size_t slash = s.path.find_last_of(L"\\/");
+            std::wstring leaf = (slash == std::wstring::npos) ? s.path : s.path.substr(slash + 1);
+            notice += "  - Part " + std::to_string(s.volumeNumber) + ": " + WideToUtf8(leaf) + " (" + WideToUtf8(FormatBytesW(s.fileSize)) + ")\n";
+        }
+
+        notice += "\nSECURITY & DECRYPTION ADVISORY:\n";
+        notice += "This archive was created with header encryption enabled (-hp in WinRAR).\n";
+        notice += "Because the file directory table, filenames, and folder hierarchy are all encrypted\n";
+        notice += "with AES-256, contents cannot be listed or extracted without the archive password.\n\n";
+        notice += "HOW TO EXTRACT OR ACCESS THIS ARCHIVE:\n";
+        notice += "1. Right-click the archive in Spet@Term and choose 'Descompactar para a pasta...'\n";
+        notice += "2. Alternatively, open with WinRAR or 7-Zip and enter the password when prompted.\n";
+        notice += "================================================================================\n";
+
+        std::string manifest;
+        manifest += "VOLUME MANIFEST & CHECKSUM STATUS:\n";
+        manifest += "Total Parts: " + std::to_string(siblings.size()) + "\n";
+        manifest += "Total Cumulative Size: " + std::to_string(totalVolumeBytes) + " bytes (" + WideToUtf8(FormatBytesW(totalVolumeBytes)) + ")\n\n";
+        for (const auto& s : siblings) {
+            size_t slash = s.path.find_last_of(L"\\/");
+            std::wstring leaf = (slash == std::wstring::npos) ? s.path : s.path.substr(slash + 1);
+            manifest += "Part " + std::to_string(s.volumeNumber) + " : " + WideToUtf8(leaf) + " | " + std::to_string(s.fileSize) + " B\n";
+        }
+
+        ArchiveEntry noticeE;
+        noticeE.name = L"[ENCRYPTED_ARCHIVE_NOTICE].txt";
+        noticeE.folder = L"(root)";
+        noticeE.path = noticeE.name;
+        noticeE.inlineData = StringToBytes(notice);
+        noticeE.compressedSize = noticeE.inlineData.size();
+        noticeE.uncompressedSize = noticeE.inlineData.size();
+        noticeE.compressionMethod = L"Cryptographic Advisory Notice";
+        noticeE.crc32 = ComputeCrc32(noticeE.inlineData);
+        noticeE.category = AssetCategory::Config;
+        noticeE.customFlags = ExtractMode::InlineOnly;
+        arc.entries.push_back(std::move(noticeE));
+
+        ArchiveEntry manE;
+        manE.name = L"Volume_Manifest.txt";
+        manE.folder = L"(root)";
+        manE.path = manE.name;
+        manE.inlineData = StringToBytes(manifest);
+        manE.compressedSize = manE.inlineData.size();
+        manE.uncompressedSize = manE.inlineData.size();
+        manE.compressionMethod = L"Volume Manifest";
+        manE.crc32 = ComputeCrc32(manE.inlineData);
+        manE.category = AssetCategory::Config;
+        manE.customFlags = ExtractMode::InlineOnly;
+        arc.entries.push_back(std::move(manE));
+
+        AddHeaderField(arc, L"Encryption", L"0x00000000", 0, L"AES-256 (CBC) + PBKDF2-HMAC-SHA256", L"Cryptographic standard");
+        AddHeaderField(arc, L"Header Protection", L"0x0000000C", 1, L"Enabled (WinRAR -hp)", L"Directory table encrypted");
+        AddHeaderField(arc, L"Discovered Volumes", L"Multi-Volume", static_cast<uint32_t>(siblings.size()),
+            std::to_wstring(siblings.size()) + L" volumes (" + FormatBytesW(totalVolumeBytes) + L")", L"Sibling parts in directory");
+        return;
+    }
+
+    // If unencrypted and multi-volume: parse all other sibling volumes to build the complete unified directory tree!
+    if (siblings.size() > 1) {
+        for (const auto& s : siblings) {
+            if (_wcsicmp(s.path.c_str(), path.c_str()) == 0) continue;
+            MappedFile sibMf(s.path);
+            if (!sibMf.valid()) continue;
+            BinaryReader sibR(sibMf.span());
+            bool sibEnc = false;
+            std::string sibSalt;
+            uint8_t sibKdf = 15;
+            ParseRarVolumeBlockEntries(sibR, s.volumeNumber, sibEnc, sibSalt, sibKdf, pathMap, arc.entries);
         }
     }
 
     AddHeaderField(arc, L"RAR Signature Marker", L"0x00000000", isRar5 ? 8 : 7,
         isRar5 ? L"Rar!\\x1A\\x07\\x01\\x00 (v5.0)" : L"Rar!\\x1A\\x07\\x00 (v4.x)", L"RAR magic marker block");
+    if (siblings.size() > 1) {
+        uint64_t totalVolumeBytes = 0;
+        for (const auto& s : siblings) totalVolumeBytes += s.fileSize;
+        AddHeaderField(arc, L"Multi-Volume Set", L"Sibling Volumes", static_cast<uint32_t>(siblings.size()),
+            std::to_wstring(siblings.size()) + L" volumes (" + FormatBytesW(totalVolumeBytes) + L")", L"Multi-part volume set assembled");
+    }
     AddHeaderField(arc, L"Parsed Block Entries", L"0x00000007", static_cast<uint32_t>(r.size() > 7 ? r.size() - 7 : 0),
         std::to_wstring(arc.entries.size()) + L" file blocks", L"File headers and payload blocks discovered in stream");
 }
@@ -4843,28 +5377,196 @@ inline void ParseXbox360XexArchive(const std::wstring& path, BinaryReader& r, Pa
 inline void ParseXboxXvdArchive(const std::wstring& path, BinaryReader& r, ParsedGameArchive& arc) {
     arc.valid = true;
     arc.formatId = ArchiveFormatId::APPX;
-    arc.formatName = L"Xbox Virtual Disk (.xvd / .xvc)";
-    arc.engineName = L"Microsoft Xbox One / Series X|S GDK";
+    arc.formatName = L"Xbox Virtual Disk / Container (.msixvc / .xvd / .xvc)";
+    arc.engineName = L"Microsoft Xbox One / Series X|S / PC GDK";
     arc.isLittleEndian = true;
 
     size_t sigOff = (r.size() >= 0x208 && r.read_ascii(0x200, 8, false) == "msft-xvd") ? 0x200 : 0;
-    AddHeaderField(arc, L"Signature", ToHexW(sigOff), 8, L"msft-xvd", L"Xbox Virtual Disk Container");
+    std::string sig = r.read_ascii(sigOff, 8, false);
+    if (sig.empty() || sig.rfind("msft", 0) != 0) sig = "msft";
 
-    std::string info = "=== XBOX VIRTUAL DISK (XVD / XVC) ===\nFile Size: " + std::to_string(r.size()) + " bytes\n";
+    uint64_t volumeSize = r.size();
+    if (r.size() >= sigOff + 0x28) {
+        uint64_t cand = r.read_le<uint64_t>(sigOff + 0x18);
+        if (cand > 0 && cand < 2000ULL * 1024 * 1024 * 1024) volumeSize = cand;
+    }
+
+    AddHeaderField(arc, L"Container Signature", ToHexW(sigOff), 8, AsciiToWide(sig), L"Xbox Virtual Disk / MSIXVC Container Signature");
+    AddHeaderField(arc, L"Virtual Volume Size", ToHexW(sigOff + 0x18), 8,
+        FormatBytesW(volumeSize) + L" (" + std::to_wstring(volumeSize) + L" bytes)", L"Block device volume partition size");
+    AddHeaderField(arc, L"Sector Size", L"Superblock", 4, L"4096 Bytes (4KB Advanced Format)", L"Filesystem storage sector alignment");
+
+    // 1. Detailed Diagnostic Container Report
+    std::string info = "=== MICROSOFT GDK XBOX VIRTUAL CONTAINER (MSIXVC / XVD / XVC) ===\n\n";
+    info += "File Path: " + WideToUtf8Str(path) + "\n";
+    info += "File Size: " + std::to_string(r.size()) + " bytes (" + WideToUtf8Str(FormatBytesW(r.size())) + ")\n";
+    info += "Virtual Volume Size: " + std::to_string(volumeSize) + " bytes (" + WideToUtf8Str(FormatBytesW(volumeSize)) + ")\n";
+    info += "Header Magic: " + sig + " at offset 0x" + WideToUtf8Str(ToHexW(sigOff)) + "\n";
+    info += "Sector Size: 4096 bytes (4KB)\n";
+    info += "Target Architecture: Microsoft GDK (Xbox One, Xbox Series X|S, Windows PC)\n";
+    info += "Content Integrity: SHA-256 Hierarchical Hash Tree\n";
     auto ib = StringToBytes(info);
-    ArchiveEntry e;
-    e.name = L"XvdHeaderInfo.txt";
-    e.folder = L"metadata";
-    e.path = L"metadata/XvdHeaderInfo.txt";
-    e.offset = 0;
-    e.compressedSize = ib.size();
-    e.uncompressedSize = ib.size();
-    e.compressionMethod = L"Synthesized XVD Report";
-    e.crc32 = ComputeCrc32(ib);
-    e.category = AssetCategory::Config;
-    e.customFlags = ExtractMode::InlineOnly;
-    e.inlineData = std::move(ib);
-    arc.entries.push_back(std::move(e));
+
+    ArchiveEntry eReport;
+    eReport.name = L"ContainerReport.txt";
+    eReport.folder = L"";
+    eReport.path = L"ContainerReport.txt";
+    eReport.offset = 0;
+    eReport.compressedSize = ib.size();
+    eReport.uncompressedSize = ib.size();
+    eReport.compressionMethod = L"Synthesized Metadata";
+    eReport.crc32 = ComputeCrc32(ib);
+    eReport.category = AssetCategory::Config;
+    eReport.customFlags = ExtractMode::InlineOnly;
+    eReport.inlineData = std::move(ib);
+    arc.entries.push_back(std::move(eReport));
+
+    // 2. Raw Superblock (First 4KB sector)
+    size_t superBlockLen = std::min<size_t>(r.size(), 4096);
+    auto sbSlice = r.copy_slice(0, superBlockLen);
+    ArchiveEntry eSuperblock;
+    eSuperblock.name = L"SecuritySuperblock.bin";
+    eSuperblock.folder = L"metadata";
+    eSuperblock.path = L"metadata/SecuritySuperblock.bin";
+    eSuperblock.offset = 0;
+    eSuperblock.compressedSize = sbSlice.size();
+    eSuperblock.uncompressedSize = sbSlice.size();
+    eSuperblock.compressionMethod = L"Raw Disk Header";
+    eSuperblock.crc32 = ComputeCrc32(sbSlice);
+    eSuperblock.category = AssetCategory::Binary;
+    eSuperblock.customFlags = ExtractMode::InlineOnly;
+    eSuperblock.inlineData = std::move(sbSlice);
+    arc.entries.push_back(std::move(eSuperblock));
+
+    // 3. Decryption Notice
+    std::string notice = "=== MSIXVC / XVC ENCRYPTION ARCHITECTURE NOTICE ===\n\n";
+    notice += "Commercial MSIXVC packages distributed through Microsoft Store / Xbox PC Game Pass\n";
+    notice += "employ hardware-level AES-XTS (XTS-AES-128 / XTS-AES-256) block encryption.\n\n";
+    notice += "To mount and extract encrypted game assets from this file on Windows:\n";
+    notice += "1. The package can be installed/mounted natively via Windows Gaming Services.\n";
+    notice += "2. For modding and reverse-engineering, open-source xvdtool / XvdTool.Streaming\n";
+    notice += "   can decrypt payload chunks when supplied with the Content Instance Key (CIK).\n";
+    notice += "3. Development builds from Xbox Developer Kits (GDK / XDK) with test keys\n";
+    notice += "   can be inspected directly.\n";
+    auto nb = StringToBytes(notice);
+
+    ArchiveEntry eNotice;
+    eNotice.name = L"DecryptionNotice.txt";
+    eNotice.folder = L"";
+    eNotice.path = L"DecryptionNotice.txt";
+    eNotice.offset = 0;
+    eNotice.compressedSize = nb.size();
+    eNotice.uncompressedSize = nb.size();
+    eNotice.compressionMethod = L"Advisory Report";
+    eNotice.crc32 = ComputeCrc32(nb);
+    eNotice.category = AssetCategory::Config;
+    eNotice.customFlags = ExtractMode::InlineOnly;
+    eNotice.inlineData = std::move(nb);
+    arc.entries.push_back(std::move(eNotice));
+
+    // 4. Carve plain-text XML manifests if present in unencrypted headers
+    size_t scanLimit = std::min<size_t>(r.size(), 64 * 1024 * 1024);
+    std::string_view headView(reinterpret_cast<const char*>(r.data()), scanLimit);
+
+    std::string blockMapXmlContent;
+
+    auto extractXmlBlock = [&](std::string_view tagStart, std::string_view tagEnd,
+                               const std::wstring& outName, const std::wstring& outFolder) {
+        size_t sPos = headView.find(tagStart);
+        if (sPos != std::string_view::npos) {
+            size_t ePos = headView.find(tagEnd, sPos);
+            if (ePos != std::string_view::npos && ePos + tagEnd.size() > sPos) {
+                size_t len = (ePos + tagEnd.size()) - sPos;
+                if (len <= 8 * 1024 * 1024) {
+                    std::string xmlStr(headView.substr(sPos, len));
+                    if (outName == L"AppxBlockMap.xml") {
+                        blockMapXmlContent = xmlStr;
+                    }
+                    auto xmlBytes = StringToBytes(xmlStr);
+                    ArchiveEntry xe;
+                    xe.name = outName;
+                    xe.folder = outFolder;
+                    xe.path = outFolder + L"/" + outName;
+                    xe.offset = sPos;
+                    xe.compressedSize = xmlBytes.size();
+                    xe.uncompressedSize = xmlBytes.size();
+                    xe.compressionMethod = L"Carved Plaintext XML";
+                    xe.crc32 = ComputeCrc32(xmlBytes);
+                    xe.category = AssetCategory::Config;
+                    xe.customFlags = ExtractMode::InlineOnly;
+                    xe.inlineData = std::move(xmlBytes);
+                    arc.entries.push_back(std::move(xe));
+                }
+            }
+        }
+    };
+
+    extractXmlBlock("<Game", "</Game>", L"MicrosoftGame.config", L"config");
+    extractXmlBlock("<Package", "</Package>", L"AppxManifest.xml", L"config");
+    extractXmlBlock("<BlockMap", "</BlockMap>", L"AppxBlockMap.xml", L"config");
+
+    // 5. Synthesize full virtual directory tree from AppxBlockMap.xml / GDK Manifest
+    auto parseBlockMapEntries = [&](std::string_view blockMapXml) {
+        size_t pos = 0;
+        size_t count = 0;
+        while (pos < blockMapXml.size() && count < 65536) {
+            size_t tagPos = blockMapXml.find("<File ", pos);
+            if (tagPos == std::string_view::npos) break;
+            size_t tagEnd = blockMapXml.find('>', tagPos);
+            if (tagEnd == std::string_view::npos) break;
+
+            std::string_view tagStr = blockMapXml.substr(tagPos, tagEnd - tagPos);
+            pos = tagEnd + 1;
+
+            size_t namePos = tagStr.find("Name=\"");
+            if (namePos == std::string_view::npos) continue;
+            size_t nameStart = namePos + 6;
+            size_t nameEnd = tagStr.find('"', nameStart);
+            if (nameEnd == std::string_view::npos) continue;
+            std::string rawName(tagStr.substr(nameStart, nameEnd - nameStart));
+
+            uint64_t fileSize = 0;
+            size_t sizePos = tagStr.find("Size=\"");
+            if (sizePos != std::string_view::npos) {
+                size_t sizeStart = sizePos + 6;
+                size_t sizeEnd = tagStr.find('"', sizeStart);
+                if (sizeEnd != std::string_view::npos) {
+                    std::string sizeStr(tagStr.substr(sizeStart, sizeEnd - sizeStart));
+                    try { fileSize = std::stoull(sizeStr); } catch (...) { fileSize = 0; }
+                }
+            }
+
+            for (auto& c : rawName) {
+                if (c == '\\') c = '/';
+            }
+            std::wstring wPath = Utf8ToWide(rawName);
+            if (wPath.empty()) wPath = AsciiToWide(rawName);
+            auto sp = SplitVirtualPath(wPath);
+
+            ArchiveEntry fe;
+            fe.name = sp.name;
+            fe.path = sp.cleanPath;
+            fe.folder = sp.folder;
+            fe.offset = 0;
+            fe.compressedSize = fileSize;
+            fe.uncompressedSize = fileSize;
+            fe.compressionMethod = L"MSIXVC BlockMap File";
+            fe.crc32 = 0;
+            fe.category = ClassifyAsset(sp.cleanPath);
+            fe.customFlags = ExtractMode::InlineOnly;
+            arc.entries.push_back(std::move(fe));
+            count++;
+        }
+    };
+
+    if (!blockMapXmlContent.empty()) {
+        parseBlockMapEntries(blockMapXmlContent);
+    } else {
+        // Fallback: search for <File Name= in the carved unencrypted header
+        if (headView.find("<File ") != std::string_view::npos) {
+            parseBlockMapEntries(headView);
+        }
+    }
 }
 
 // ============================================================================
@@ -5266,6 +5968,9 @@ inline void ParseZlibAndCarveStreams(const std::wstring& path, BinaryReader& r, 
 
 } // namespace gfe_detail
 
+using gfe_detail::GetDefaultDoomPalette;
+using gfe_detail::DecodeDoomPictureToRgba;
+
 // ============================================================================
 // Public API: Format Detection & Archive Parsing
 // ============================================================================
@@ -5359,7 +6064,9 @@ inline ParsedGameArchive ParseArchiveBytes(const std::wstring& path, std::span<c
         return arc;
     }
     // 5. RAR v4 / v5
-    if (m4 == "Rar!" || EndsWithW(lower, L".rar")) {
+    bool isRarPart = (lower.size() >= 4 && lower[lower.size() - 4] == L'.' && lower[lower.size() - 3] == L'r' &&
+                      iswdigit(lower[lower.size() - 2]) && iswdigit(lower[lower.size() - 1]));
+    if (m4 == "Rar!" || EndsWithW(lower, L".rar") || isRarPart) {
         ParseRarArchive(path, r, arc);
         return arc;
     }
@@ -5442,9 +6149,9 @@ inline ParsedGameArchive ParseArchiveBytes(const std::wstring& path, std::span<c
         ParseXbox360GodArchive(path, r, arc);
         return arc;
     }
-    // 20. Xbox One / Series XVD / XVC
+    // 20. Xbox One / Series XVD / XVC / MSIXVC
     if (m4 == "msft" || (r.size() >= 0x208 && r.read_ascii(0x200, 4, false) == "msft") ||
-        EndsWithW(lower, L".xvd") || EndsWithW(lower, L".xvc")) {
+        EndsWithW(lower, L".xvd") || EndsWithW(lower, L".xvc") || EndsWithW(lower, L".msixvc")) {
         ParseXboxXvdArchive(path, r, arc);
         return arc;
     }
@@ -5540,7 +6247,21 @@ inline bool ExtractArchiveEntryBytes(const ParsedGameArchive& arc, const Archive
         return true;
     }
 
-    MappedFile mf(arc.filePath);
+    std::wstring sourceFilePath = arc.filePath;
+    if (arc.formatId == ArchiveFormatId::RAR) {
+        uint32_t volIdx = (entry.customFlags >> 8) & 0xFF;
+        if (volIdx > 0) {
+            auto sibs = FindRarVolumeSiblings(arc.filePath);
+            for (const auto& s : sibs) {
+                if (s.volumeNumber == volIdx) {
+                    sourceFilePath = s.path;
+                    break;
+                }
+            }
+        }
+    }
+
+    MappedFile mf(sourceFilePath);
     if (!mf.valid()) return false;
     BinaryReader r(mf.span());
 

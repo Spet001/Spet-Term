@@ -18,6 +18,30 @@ enum class PaneMode {
     FileExplorer
 };
 
+struct CustomContextMenuItem {
+    int id = 0;
+    std::wstring label;
+    std::wstring shortcut;
+    wchar_t icon = 0;
+    bool isSeparator = false;
+    bool isDanger = false;
+    D2D1_RECT_F rect{ 0, 0, 0, 0 };
+};
+
+struct CustomContextMenuState {
+    bool isOpen = false;
+    POINT origin{ 0, 0 };
+    D2D1_RECT_F bounds{ 0, 0, 0, 0 };
+    int hoveredIndex = -1;
+    std::vector<CustomContextMenuItem> items;
+
+    void Close() noexcept {
+        isOpen = false;
+        hoveredIndex = -1;
+        items.clear();
+    }
+};
+
 struct TerminalPane {
     int id = 1;
     PaneMode paneMode = PaneMode::Terminal;
@@ -108,9 +132,13 @@ struct TerminalPane {
     D2D1_RECT_F expActionPlayAudioBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F expActionStopAudioBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F expActionAudioSeekRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionPlayVideoBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionStopVideoBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F expActionVideoSeekRect{ 0, 0, 0, 0 };
     D2D1_RECT_F exp3DWireframeBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F exp3DAutoRotBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F exp3DResetBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F exp3DFlipVBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F expUnlockBtnRect{ 0, 0, 0, 0 };
     D2D1_RECT_F expCalcHashBtnRect{ 0, 0, 0, 0 };
     bool expSearchFocused = false;
@@ -169,6 +197,17 @@ struct TerminalTab {
     bool isImagePreview = false;
     ID2D1Bitmap* editorImageBitmap = nullptr;
     D2D1_SIZE_F editorImageSize{ 0, 0 };
+
+    // Dedicated Media Playback & 3D Tab
+    bool isMediaPlayback = false;
+    bool isVideoPlayback = false;
+    bool isAudioPlayback = false;
+    bool is3DPreviewTab = false;
+    std::wstring mediaFilePath;
+    std::wstring mediaTitle;
+    D2D1_RECT_F tabMediaPlayBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F tabMediaStopBtnRect{ 0, 0, 0, 0 };
+    D2D1_RECT_F tabMediaSeekRect{ 0, 0, 0, 0 };
 
     // Virtual Game Archive in-place editing & repacking
     bool isVirtualArchiveEditor = false;

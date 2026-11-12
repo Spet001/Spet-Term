@@ -266,8 +266,35 @@ public:
         }
     }
 
+    void TogglePause() {
+        if (m_paused.load()) {
+            Resume();
+        } else {
+            Pause();
+        }
+    }
+
+    void Stop() {
+        Pause();
+        Seek(0.0);
+    }
+
     bool IsPaused() const {
         return m_paused;
+    }
+
+    double GetDurationSeconds() const {
+        return static_cast<double>(m_videoDurationHns) / 10000000.0;
+    }
+
+    double GetPositionSeconds() const {
+        return static_cast<double>(m_videoCurrentHns.load()) / 10000000.0;
+    }
+
+    void Seek(double seconds) {
+        if (seconds < 0.0) seconds = 0.0;
+        int64_t hns = static_cast<int64_t>(seconds * 10000000.0);
+        m_videoSeekTargetHns.store(hns);
     }
 
     WallpaperType GetCurrentType() const {
@@ -506,6 +533,32 @@ private:
         // Start video decode worker thread
         m_videoStop = false;
         m_videoRunning = true;
+        m_videoCurrentHns.store(0);
+        m_videoSeekTargetHns.store(-1);
+        m_videoDurationHns = 0;
+        if (m_pSourceReader) {
+            PROPVARIANT var;
+            PropVariantInit(&var);
+            if (SUCCEEDED(m_pSourceReader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var))) {
+                if (var.vt == VT_UI8) {
+                    m_videoDurationHns = static_cast<int64_t>(var.uhVal.QuadPart);
+                } else if (var.vt == VT_I8) {
+                    m_videoDurationHns = var.hVal.QuadPart;
+                }
+            }
+            PropVariantClear(&var);
+            if (m_videoDurationHns == 0) {
+                PropVariantInit(&var);
+                if (SUCCEEDED(m_pSourceReader->GetPresentationAttribute(0, MF_PD_DURATION, &var))) {
+                    if (var.vt == VT_UI8) {
+                        m_videoDurationHns = static_cast<int64_t>(var.uhVal.QuadPart);
+                    } else if (var.vt == VT_I8) {
+                        m_videoDurationHns = var.hVal.QuadPart;
+                    }
+                }
+                PropVariantClear(&var);
+            }
+        }
         m_videoThread = std::thread([this]() {
             this->VideoWorkerLoop();
         });
@@ -576,6 +629,34 @@ private:
         }
 
         while (!m_videoStop) {
+            int64_t targetHns = m_videoSeekTargetHns.exchange(-1);
+            if (targetHns >= 0 && m_pSourceReader) {
+                PROPVARIANT var;
+                PropVariantInit(&var);
+                var.vt = VT_I8;
+                var.hVal.QuadPart = targetHns;
+                m_pSourceReader->SetCurrentPosition(GUID_NULL, var);
+                PropVariantClear(&var);
+                buffer.clear();
+                endOfStream = false;
+                m_videoCurrentHns.store(targetHns);
+
+                // Fetch frame immediately to update display even when paused
+                FetchOne();
+                if (!buffer.empty()) {
+                    auto minIt = std::min_element(buffer.begin(), buffer.end(), [](const QueuedFrame& a, const QueuedFrame& b) {
+                        return a.ts < b.ts;
+                    });
+                    QueuedFrame popped = std::move(*minIt);
+                    buffer.erase(minIt);
+                    m_videoCurrentHns.store(popped.ts);
+                    if (!popped.pixels.empty() && m_pD3DContext && m_pVideoDestTexture) {
+                        UINT rowPitch = m_videoWidth * 4;
+                        m_pD3DContext->UpdateSubresource(m_pVideoDestTexture, 0, nullptr, popped.pixels.data(), rowPitch, 0);
+                    }
+                }
+            }
+
             if (m_paused) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
@@ -613,6 +694,7 @@ private:
 
             QueuedFrame popped = std::move(*minIt);
             buffer.erase(minIt);
+            m_videoCurrentHns.store(popped.ts);
 
             if (!popped.pixels.empty() && m_pD3DContext && m_pVideoDestTexture) {
                 UINT rowPitch = m_videoWidth * 4;
@@ -683,6 +765,9 @@ private:
     std::thread m_videoThread;
     std::atomic<bool> m_videoStop{ false };
     std::atomic<bool> m_videoRunning{ false };
+    std::atomic<int64_t> m_videoCurrentHns{ 0 };
+    int64_t m_videoDurationHns{ 0 };
+    std::atomic<int64_t> m_videoSeekTargetHns{ -1 };
     bool m_mfStarted = false;
 };
 

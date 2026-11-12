@@ -58,6 +58,12 @@ public:
     bool helpModalOpen = false;
     bool multiLinePasteModalOpen = false;
     std::wstring pendingPasteText;
+    CustomContextMenuState customContextMenu;
+    struct ExplorerClipboard {
+        std::vector<std::wstring> paths;
+        bool isCut = false;
+    };
+    ExplorerClipboard explorerClipboard;
 
     // Mouse Text Selection
     bool isMouseSelecting = false;
@@ -584,6 +590,7 @@ public:
 
     void UpdateExplorerPreview(TerminalPane& pane) {
         SafeRelease(pane.explorerPreviewBitmap);
+        renderer.previewMediaEngine.Load(L"none");
         pane.explorerPreviewRgba.clear();
         pane.explorerPreviewRgbaW = 0;
         pane.explorerPreviewRgbaH = 0;
@@ -607,6 +614,31 @@ public:
         std::wstring itemKey = selEntry->fullPath.empty() ? selEntry->name : selEntry->fullPath;
         pane.previewedKey = itemKey;
 
+        std::wstring ext = ToLower(selEntry->extension);
+
+        // Large file (> 64 MB) memory guard: avoid buffering gigabytes into RAM for preview
+        if (selEntry->sizeBytes > 64 * 1024 * 1024 &&
+            ext != L".mp4" && ext != L".mkv" && ext != L".avi" && ext != L".wmv" && ext != L".mov") {
+            pane.explorerPreviewTextLines.push_back(L"File: " + selEntry->name);
+            pane.explorerPreviewTextLines.push_back(L"Size: " + selEntry->sizeFormatted + L" (" + std::to_wstring(selEntry->sizeBytes) + L" bytes)");
+            pane.explorerPreviewTextLines.push_back(L"Type: " + (selEntry->extension.empty() ? L"Binary File" : selEntry->extension));
+            pane.explorerPreviewTextLines.push_back(L"Modified: " + selEntry->modifiedFormatted);
+            pane.explorerPreviewTextLines.push_back(L"");
+            pane.explorerPreviewTextLines.push_back(L"Memory Guard: Direct in-memory preview disabled for large files (> 64 MB)");
+            pane.explorerPreviewTextLines.push_back(L"to preserve system performance and prevent RAM saturation.");
+            return;
+        }
+
+        // Native Hardware-Accelerated Video Player (.mp4, .mkv, .avi, .wmv, .mov)
+        if (ext == L".mp4" || ext == L".mkv" || ext == L".avi" || ext == L".wmv" || ext == L".mov") {
+            pane.explorerPreviewIsVideo = true;
+            if (!selEntry->fullPath.empty() && PathFileExistsW(selEntry->fullPath.c_str())) {
+                renderer.previewMediaEngine.Load(selEntry->fullPath);
+                renderer.previewMediaEngine.Resume();
+            }
+            return;
+        }
+
         std::vector<uint8_t> data;
         if (pane.explorer.inVirtualArchive) {
             data = pane.explorer.ExtractEntryToMemory(*selEntry);
@@ -617,7 +649,12 @@ public:
             if (hFile != INVALID_HANDLE_VALUE) {
                 LARGE_INTEGER sz{};
                 if (GetFileSizeEx(hFile, &sz) && sz.QuadPart > 0) {
-                    DWORD toRead = static_cast<DWORD>((std::min<LONGLONG>)(sz.QuadPart, 4 * 1024 * 1024));
+                    LONGLONG maxBytes = 4 * 1024 * 1024;
+                    if (ext == L".glb" || ext == L".gltf" || ext == L".obj" ||
+                        ext == L".dds" || ext == L".tim" || ext == L".wad") {
+                        maxBytes = 64 * 1024 * 1024;
+                    }
+                    DWORD toRead = static_cast<DWORD>((std::min<LONGLONG>)(sz.QuadPart, maxBytes));
                     data.resize(toRead);
                     DWORD bytesRead = 0;
                     if (ReadFile(hFile, data.data(), toRead, &bytesRead, nullptr)) {
@@ -631,7 +668,40 @@ public:
         pane.explorerPreviewRawBytes = data;
         if (data.empty()) return;
 
-        std::wstring ext = ToLower(selEntry->extension);
+        // 0. DOOM WAD Sprites, Flats, Patches & Sounds
+        if (pane.explorer.inVirtualArchive && pane.explorer.activeArchive &&
+            pane.explorer.activeArchive->formatId == ArchiveFormatId::WAD) {
+            std::wstring folder = ToLower(pane.explorer.virtualSubDir);
+            if (selEntry->virtualArchiveEntryIndex < pane.explorer.activeArchive->entries.size()) {
+                folder = ToLower(pane.explorer.activeArchive->entries[selEntry->virtualArchiveEntryIndex].folder);
+            }
+            std::wstring name = ToLower(selEntry->name);
+            const auto& playpal = pane.explorer.activeArchive->doomPlaypal;
+
+            if (folder == L"sounds" || name.starts_with(L"ds") || name.starts_with(L"dp") ||
+                (data.size() >= 8 && data[0] == 0x03 && data[1] == 0x00)) {
+                pane.explorerPreviewIsAudio = true;
+                return;
+            }
+            if (folder == L"flats" || data.size() == 4096) {
+                uint32_t w = 0, h = 0;
+                if (DecodeDoomFlatToRgba(data, playpal, pane.explorerPreviewRgba, w, h)) {
+                    pane.explorerPreviewRgbaW = w;
+                    pane.explorerPreviewRgbaH = h;
+                    pane.explorerPreviewImageFormat = L"DOOM Flat 64x64 (" + selEntry->name + L")";
+                    pane.explorerPreviewBitmap = renderer.CreateBitmapFromRgbaBytes(pane.explorerPreviewRgba.data(), w, h);
+                    return;
+                }
+            }
+            uint32_t pw = 0, ph = 0;
+            if (DecodeDoomPictureToRgba(data, playpal, pane.explorerPreviewRgba, pw, ph)) {
+                pane.explorerPreviewRgbaW = pw;
+                pane.explorerPreviewRgbaH = ph;
+                pane.explorerPreviewImageFormat = L"DOOM Graphic (" + selEntry->name + L")";
+                pane.explorerPreviewBitmap = renderer.CreateBitmapFromRgbaBytes(pane.explorerPreviewRgba.data(), pw, ph);
+                return;
+            }
+        }
 
         // 1. 3D Meshes (.glb, .gltf, .obj)
         if (ext == L".glb" || ext == L".gltf" || ext == L".obj") {
@@ -665,7 +735,49 @@ public:
             }
         }
 
-        // 4. DOOM WAD Maps
+        // 4. Bink Video Metadata (.bik, .bk2)
+        if (ext == L".bik" || ext == L".bk2" ||
+            (data.size() >= 4 && (memcmp(data.data(), "BIK", 3) == 0 || memcmp(data.data(), "KB2", 3) == 0))) {
+            pane.explorerPreviewTextLines.clear();
+            std::string sig(reinterpret_cast<const char*>(data.data()), (std::min)(data.size(), size_t(4)));
+            uint32_t numFrames = (data.size() >= 12) ? *reinterpret_cast<const uint32_t*>(data.data() + 8) : 0;
+            uint32_t width = (data.size() >= 24) ? *reinterpret_cast<const uint32_t*>(data.data() + 20) : 0;
+            uint32_t height = (data.size() >= 28) ? *reinterpret_cast<const uint32_t*>(data.data() + 24) : 0;
+            uint32_t fpsNum = (data.size() >= 32) ? *reinterpret_cast<const uint32_t*>(data.data() + 28) : 0;
+            uint32_t fpsDen = (data.size() >= 36) ? *reinterpret_cast<const uint32_t*>(data.data() + 32) : 0;
+            uint32_t numAudio = (data.size() >= 44) ? *reinterpret_cast<const uint32_t*>(data.data() + 40) : 0;
+            float fps = (fpsDen > 0) ? (static_cast<float>(fpsNum) / static_cast<float>(fpsDen)) : 30.0f;
+
+            pane.explorerPreviewTextLines.push_back(L"RAD Game Tools Bink Video (.bik / .bk2)");
+            pane.explorerPreviewTextLines.push_back(L"-----------------------------------------");
+            pane.explorerPreviewTextLines.push_back(L"Codec Identifier: " + Utf8ToWide(sig));
+            pane.explorerPreviewTextLines.push_back(L"Dimensions: " + std::to_wstring(width) + L" x " + std::to_wstring(height));
+            pane.explorerPreviewTextLines.push_back(L"Total Frames: " + std::to_wstring(numFrames));
+            wchar_t fpsBuf[32];
+            swprintf_s(fpsBuf, L"%.2f FPS", fps);
+            pane.explorerPreviewTextLines.push_back(L"Frame Rate: " + std::wstring(fpsBuf));
+            pane.explorerPreviewTextLines.push_back(L"Audio Tracks: " + std::to_wstring(numAudio));
+            pane.explorerPreviewTextLines.push_back(L"Container Size: " + selEntry->sizeFormatted);
+            pane.explorerPreviewTextLines.push_back(L"Status: Proprietary Bink Codec (Metadata Inspection Only)");
+            return;
+        }
+
+        // 5. Microsoft GDK Encrypted Game Package Metadata (.msixvc, .xvd, .xvc)
+        if (ext == L".msixvc" || ext == L".xvd" || ext == L".xvc" ||
+            (data.size() >= 4 && memcmp(data.data(), "msft", 4) == 0)) {
+            pane.explorerPreviewTextLines.clear();
+            pane.explorerPreviewTextLines.push_back(L"Microsoft GDK Game Package (MSIXVC / XVD)");
+            pane.explorerPreviewTextLines.push_back(L"-----------------------------------------");
+            pane.explorerPreviewTextLines.push_back(L"Package Magic: msft (Xbox Virtual Disk)");
+            pane.explorerPreviewTextLines.push_back(L"Package File: " + selEntry->name);
+            pane.explorerPreviewTextLines.push_back(L"Total Size: " + selEntry->sizeFormatted);
+            pane.explorerPreviewTextLines.push_back(L"Encryption: XTS-AES-256 (Protected Windows/Xbox Container)");
+            pane.explorerPreviewTextLines.push_back(L"Platform: Microsoft Gaming Services / Xbox PC GDK");
+            pane.explorerPreviewTextLines.push_back(L"Status: Encrypted Container (Inspect Metadata Only)");
+            return;
+        }
+
+        // 6. DOOM WAD Maps
         if (ext == L".wad") {
             DoomMapGeometry geom;
             if (geom.LoadFromWadBytes(data)) {
@@ -675,19 +787,13 @@ public:
             }
         }
 
-        // 5. Audio files (.wav, .mp3, .ogg, .adx, .swav)
+        // 7. Audio files (.wav, .mp3, .ogg, .adx, .swav)
         if (ext == L".wav" || ext == L".mp3" || ext == L".ogg" || ext == L".adx" || ext == L".swav") {
             pane.explorerPreviewIsAudio = true;
             return;
         }
 
-        // 6. Video files (.mp4, .mkv, .bik)
-        if (ext == L".mp4" || ext == L".mkv" || ext == L".bik") {
-            pane.explorerPreviewIsVideo = true;
-            return;
-        }
-
-        // 7. PE / DLL / XEX Inspection
+        // 8. PE / DLL / XEX Inspection
         if (ext == L".exe" || ext == L".dll" || ext == L".sys" || ext == L".xex" ||
             (data.size() >= 2 && data[0] == 'M' && data[1] == 'Z')) {
             auto pe = InspectBinaryHeader(data, selEntry->fullPath);
@@ -698,7 +804,7 @@ public:
             }
         }
 
-        // 8. Standard Images (WIC)
+        // 9. Standard Images (WIC)
         if (ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".bmp" || ext == L".gif" || ext == L".ico" || ext == L".webp") {
             D2D1_SIZE_F imgSz{ 0, 0 };
             pane.explorerPreviewBitmap = renderer.LoadBitmapFromMemory(data.data(), static_cast<UINT>(data.size()), imgSz);
@@ -709,16 +815,152 @@ public:
             }
         }
 
-        // 9. Text preview (first 60 lines)
-        size_t textLimit = (std::min)(data.size(), static_cast<size_t>(16384));
-        std::string textPart(reinterpret_cast<const char*>(data.data()), textLimit);
-        std::wstring wideText = Utf8ToWide(textPart);
-        std::wistringstream ss(wideText);
-        std::wstring line;
-        while (std::getline(ss, line) && pane.explorerPreviewTextLines.size() < 60) {
-            if (!line.empty() && line.back() == L'\r') line.pop_back();
-            pane.explorerPreviewTextLines.push_back(line);
+        // 10. Text preview (first 60 lines, files < 5 MB only)
+        if (selEntry->sizeBytes < 5 * 1024 * 1024) {
+            size_t textLimit = (std::min)(data.size(), static_cast<size_t>(16384));
+            std::string textPart(reinterpret_cast<const char*>(data.data()), textLimit);
+            std::wstring wideText = Utf8ToWide(textPart);
+            std::wistringstream ss(wideText);
+            std::wstring line;
+            while (std::getline(ss, line) && pane.explorerPreviewTextLines.size() < 60) {
+                if (!line.empty() && line.back() == L'\r') line.pop_back();
+                pane.explorerPreviewTextLines.push_back(line);
+            }
+        } else {
+            pane.explorerPreviewTextLines.push_back(L"File: " + selEntry->name);
+            pane.explorerPreviewTextLines.push_back(L"Size: " + selEntry->sizeFormatted);
+            pane.explorerPreviewTextLines.push_back(L"Type: " + (selEntry->extension.empty() ? L"Binary File" : selEntry->extension));
+            pane.explorerPreviewTextLines.push_back(L"Modified: " + selEntry->modifiedFormatted);
         }
+    }
+
+    void ActivateExplorerItem(TerminalPane& pane) {
+        const auto* sel = pane.explorer.GetSelectedEntry();
+        if (!sel) return;
+
+        if (sel->isParentDirectoryEntry) {
+            pane.scrollOffsetY = 0.0f;
+            pane.expSearchFocused = false;
+            pane.explorer.NavigateUp();
+            UpdateExplorerPreview(pane);
+            SyncLinkedSplitPaneCwd(pane);
+            return;
+        }
+
+        if (pane.explorer.inVirtualArchive) {
+            if (sel->isDirectory) {
+                pane.scrollOffsetY = 0.0f;
+                pane.expSearchFocused = false;
+                pane.explorer.EnterVirtualArchive(pane.explorer.archiveHostPath, sel->fullPath, pane.explorer.activeArchive);
+                UpdateExplorerPreview(pane);
+            } else {
+                std::wstring ext = ToLower(sel->extension);
+                std::wstring folder = ToLower(pane.explorer.virtualSubDir);
+                if (pane.explorer.activeArchive && sel->virtualArchiveEntryIndex < pane.explorer.activeArchive->entries.size()) {
+                    folder = ToLower(pane.explorer.activeArchive->entries[sel->virtualArchiveEntryIndex].folder);
+                }
+                std::wstring sName = ToLower(sel->name);
+                bool isDoomWad = (pane.explorer.activeArchive && pane.explorer.activeArchive->formatId == ArchiveFormatId::WAD);
+                bool isDoomSound = isDoomWad && (folder == L"sounds" || sName.starts_with(L"ds") || sName.starts_with(L"dp"));
+                bool isDoomPic = isDoomWad && (folder == L"sprites" || folder == L"patches" || folder == L"flats" || folder.starts_with(L"graphics"));
+
+                if (ext == L".glb" || ext == L".gltf" || ext == L".obj") {
+                    auto mBytes = pane.explorer.ExtractEntryToMemory(*sel);
+                    Open3DTab(pane.explorer.archiveHostPath + L"!" + sel->name, sel->name, mBytes);
+                } else if (ext == L".wav" || ext == L".mp3" || ext == L".ogg" || ext == L".adx" || ext == L".swav" || isDoomSound) {
+                    auto aBytes = pane.explorer.ExtractEntryToMemory(*sel);
+                    if (isDoomSound) {
+                        std::vector<uint8_t> wav;
+                        if (ConvertDoomSoundToWav(aBytes, wav)) aBytes = std::move(wav);
+                    } else if (ext == L".adx" || ext == L".swav") {
+                        std::vector<uint8_t> wav;
+                        if (ConvertGameAudioToWav(aBytes, ext, wav)) aBytes = std::move(wav);
+                    }
+                    OpenMediaTab(pane.explorer.archiveHostPath + L"!" + sel->name, false, sel->name);
+                    audioPlayer.PlayWavBytes(aBytes, sel->name);
+                } else if (isDoomWad) {
+                    auto pBytes = pane.explorer.ExtractEntryToMemory(*sel);
+                    uint32_t w = 0, h = 0;
+                    std::vector<uint8_t> rgba;
+                    bool ok = false;
+                    if (folder == L"flats" || pBytes.size() == 4096) {
+                        ok = DecodeDoomFlatToRgba(pBytes, pane.explorer.activeArchive->doomPlaypal, rgba, w, h);
+                    }
+                    if (!ok) {
+                        ok = DecodeDoomPictureToRgba(pBytes, pane.explorer.activeArchive->doomPlaypal, rgba, w, h);
+                    }
+                    if (ok) {
+                        OpenImageTabFromRgba(pane.explorer.archiveHostPath + L"!" + sel->name, sel->name, rgba, w, h);
+                    } else if (sel->sizeBytes < 1024 * 1024) {
+                        OpenVirtualArchiveEntryInEditor(pane, *sel);
+                    } else {
+                        UpdateExplorerPreview(pane);
+                    }
+                } else if (sel->sizeBytes < 1024 * 1024) {
+                    OpenVirtualArchiveEntryInEditor(pane, *sel);
+                } else {
+                    UpdateExplorerPreview(pane);
+                }
+            }
+            return;
+        }
+
+        if (sel->isDirectory) {
+            pane.scrollOffsetY = 0.0f;
+            pane.expSearchFocused = false;
+            pane.explorer.NavigateToDirectory(sel->fullPath, true);
+            UpdateExplorerPreview(pane);
+            SyncLinkedSplitPaneCwd(pane);
+            return;
+        }
+
+        std::wstring ext = ToLower(sel->extension);
+
+        // Double-click on media opens dedicated player tab
+        if (ext == L".mp4" || ext == L".mkv" || ext == L".avi" || ext == L".wmv" || ext == L".mov") {
+            OpenMediaTab(sel->fullPath, true, sel->name);
+            return;
+        }
+        if (ext == L".wav" || ext == L".mp3" || ext == L".ogg" || ext == L".adx" || ext == L".swav") {
+            OpenMediaTab(sel->fullPath, false, sel->name);
+            return;
+        }
+        if (ext == L".glb" || ext == L".gltf" || ext == L".obj") {
+            Open3DTab(sel->fullPath, sel->name);
+            return;
+        }
+
+        if (sel->isArchiveOrGameContainer) {
+            if (sel->sizeBytes > 100 * 1024 * 1024 && ext == L".bin") {
+                ShowToast(I18n::Tr(L"Arquivo binario massivo (>100MB) protegido contra carregamento direto.",
+                                   L"Massive binary file (>100MB) protected against direct loading.",
+                                   L"Archivo binario masivo (>100MB) protegido contra carga directa."));
+                UpdateExplorerPreview(pane);
+                return;
+            }
+            pane.scrollOffsetY = 0.0f;
+            pane.expSearchFocused = false;
+            pane.explorer.EnterVirtualArchive(sel->fullPath, L"");
+            UpdateExplorerPreview(pane);
+            return;
+        }
+
+        if (ext == L".exe" || ext == L".lnk" || ext == L".bat" || ext == L".cmd") {
+            ShellExecuteW(nullptr, L"open", sel->fullPath.c_str(), nullptr, pane.explorer.currentDirectory.c_str(), SW_SHOW);
+            return;
+        }
+
+        if (ext == L".bik" || ext == L".bk2" || ext == L".dds" || ext == L".tim") {
+            UpdateExplorerPreview(pane);
+            return;
+        }
+
+        if (sel->sizeBytes > 5 * 1024 * 1024 || ext == L".bin" || ext == L".msixvc" || ext == L".fd") {
+            UpdateExplorerPreview(pane);
+            return;
+        }
+
+        OpenEditorTab(sel->fullPath);
     }
 
     void ExecuteCommanderTransfer(TerminalPane& pane, bool isMove) {
@@ -746,12 +988,387 @@ public:
         }
     }
 
-    void ExecuteExtractAllVirtualArchive(TerminalPane& pane) {
-        if (!pane.explorer.inVirtualArchive || !pane.explorer.activeArchive) return;
-        std::wstring outDir = pane.explorer.archiveHostPath + L"_extracted";
+    void ExecuteExtractArchive(TerminalPane& pane, bool toSubfolder) {
+        const auto* sel = pane.explorer.GetSelectedEntry();
+        std::shared_ptr<ParsedGameArchive> arc;
+        if (pane.explorer.inVirtualArchive && pane.explorer.activeArchive) {
+            arc = pane.explorer.activeArchive;
+        } else if (sel && sel->isArchiveOrGameContainer) {
+            arc = detail::OpenOrParseArchive<ParsedGameArchive>(sel->fullPath);
+        }
+        if (!arc || arc->entries.empty()) {
+            ShowToast(I18n::Tr(L"Nenhum arquivo para extrair.", L"No files to extract.", L"No hay archivos para extraer."));
+            return;
+        }
+
+        std::wstring outDir;
+        if (toSubfolder) {
+            std::wstring folderName = sel ? sel->name : L"archive";
+            size_t dot = folderName.find_last_of(L'.');
+            if (dot != std::wstring::npos) folderName = folderName.substr(0, dot);
+            outDir = pane.explorer.currentDirectory + L"\\" + folderName;
+        } else {
+            outDir = pane.explorer.currentDirectory;
+        }
         CreateDirectoryW(outDir.c_str(), nullptr);
-        transferQueue.QueueExtractArchive(pane.explorer.activeArchive, outDir);
+        transferQueue.QueueExtractArchive(arc, outDir);
         ShowToast(I18n::Tr(L"Extracao iniciada!", L"Extraction started!", L"Extraccion iniciada!"));
+    }
+
+    void ExecuteExtractAllVirtualArchive(TerminalPane& pane) {
+        ExecuteExtractArchive(pane, false);
+    }
+
+    void SetClipboardFiles(const std::vector<std::wstring>& paths, bool isCut) {
+        explorerClipboard.paths = paths;
+        explorerClipboard.isCut = isCut;
+        if (paths.empty()) return;
+
+        if (OpenClipboard(hwnd)) {
+            EmptyClipboard();
+            size_t totalChars = 0;
+            for (const auto& p : paths) totalChars += p.size() + 1;
+            totalChars += 1;
+            size_t dropSize = sizeof(DROPFILES) + totalChars * sizeof(wchar_t);
+            HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, dropSize);
+            if (hMem) {
+                DROPFILES* df = static_cast<DROPFILES*>(GlobalLock(hMem));
+                if (df) {
+                    df->pFiles = sizeof(DROPFILES);
+                    df->fWide = TRUE;
+                    wchar_t* dest = reinterpret_cast<wchar_t*>(reinterpret_cast<uint8_t*>(df) + sizeof(DROPFILES));
+                    for (const auto& p : paths) {
+                        std::memcpy(dest, p.c_str(), p.size() * sizeof(wchar_t));
+                        dest += p.size();
+                        *dest++ = L'\0';
+                    }
+                    *dest = L'\0';
+                    GlobalUnlock(hMem);
+                    SetClipboardData(CF_HDROP, hMem);
+                }
+            }
+            CloseClipboard();
+        }
+    }
+
+    void PasteClipboardFiles(TerminalPane& pane) {
+        if (pane.explorer.inVirtualArchive) return;
+        std::wstring destDir = pane.explorer.currentDirectory;
+        std::vector<std::wstring> srcPaths = explorerClipboard.paths;
+
+        if (srcPaths.empty()) {
+            if (OpenClipboard(hwnd)) {
+                HDROP hDrop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
+                if (hDrop) {
+                    UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+                    for (UINT i = 0; i < count; ++i) {
+                        wchar_t buf[MAX_PATH];
+                        if (DragQueryFileW(hDrop, i, buf, MAX_PATH)) {
+                            srcPaths.push_back(buf);
+                        }
+                    }
+                }
+                CloseClipboard();
+            }
+        }
+
+        if (srcPaths.empty()) return;
+
+        bool isCut = explorerClipboard.isCut;
+        int count = 0;
+        for (const auto& src : srcPaths) {
+            std::filesystem::path srcFs(src);
+            std::filesystem::path destFs = std::filesystem::path(destDir) / srcFs.filename();
+            std::error_code ec;
+            if (isCut) {
+                std::filesystem::rename(srcFs, destFs, ec);
+                if (!ec) ++count;
+            } else {
+                std::filesystem::copy(srcFs, destFs, std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+                if (!ec) ++count;
+            }
+        }
+
+        if (isCut) {
+            explorerClipboard.paths.clear();
+            explorerClipboard.isCut = false;
+        }
+
+        pane.explorer.Refresh();
+        UpdateExplorerPreview(pane);
+        ShowToast(I18n::Tr(L"Arquivo(s) colado(s) com sucesso!", L"File(s) pasted successfully!", L"Archivo(s) pegado(s) con exito!"));
+    }
+
+    void OpenExplorerContextMenu(POINT pt, TerminalPane& pane) {
+        const auto* sel = pane.explorer.GetSelectedEntry();
+        if (!sel) return;
+
+        customContextMenu.items.clear();
+        customContextMenu.origin = pt;
+        customContextMenu.hoveredIndex = -1;
+
+        // 1. Open / Explore
+        CustomContextMenuItem miOpen;
+        miOpen.id = 1;
+        miOpen.label = I18n::Tr(L"Abrir / Explorar", L"Open / Explore", L"Abrir / Explorar");
+        miOpen.shortcut = L"Enter";
+        miOpen.icon = 0xE838;
+        customContextMenu.items.push_back(std::move(miOpen));
+
+        // 2. Edit in Spet@Term Editor
+        if (!sel->isDirectory) {
+            CustomContextMenuItem miEdit;
+            miEdit.id = 2;
+            miEdit.label = I18n::Tr(L"Editar no Spet@Term Editor", L"Edit in Spet@Term Editor", L"Editar en Spet@Term Editor");
+            miEdit.shortcut = L"Ctrl+E";
+            miEdit.icon = 0xE70F;
+            customContextMenu.items.push_back(std::move(miEdit));
+        }
+
+        // 3. Open Terminal Here
+        CustomContextMenuItem miTerm;
+        miTerm.id = 3;
+        miTerm.label = I18n::Tr(L"Abrir Terminal Aqui", L"Open Terminal Here", L"Abrir Terminal Aqui");
+        miTerm.shortcut = L"Ctrl+T";
+        miTerm.icon = 0xE756;
+        customContextMenu.items.push_back(std::move(miTerm));
+
+        // Separator 1: Clipboard Actions
+        CustomContextMenuItem miSep1;
+        miSep1.isSeparator = true;
+        customContextMenu.items.push_back(std::move(miSep1));
+
+        // 10. Recortar
+        CustomContextMenuItem miCut;
+        miCut.id = 10;
+        miCut.label = I18n::Tr(L"Recortar", L"Cut", L"Cortar");
+        miCut.shortcut = L"Ctrl+X";
+        miCut.icon = 0xE8C6;
+        customContextMenu.items.push_back(std::move(miCut));
+
+        // 11. Copiar
+        CustomContextMenuItem miCopy;
+        miCopy.id = 11;
+        miCopy.label = I18n::Tr(L"Copiar", L"Copy", L"Copiar");
+        miCopy.shortcut = L"Ctrl+C";
+        miCopy.icon = 0xE8C8;
+        customContextMenu.items.push_back(std::move(miCopy));
+
+        // 12. Colar
+        CustomContextMenuItem miPaste;
+        miPaste.id = 12;
+        miPaste.label = I18n::Tr(L"Colar", L"Paste", L"Pegar");
+        miPaste.shortcut = L"Ctrl+V";
+        miPaste.icon = 0xE77F;
+        customContextMenu.items.push_back(std::move(miPaste));
+
+        // 13. Copiar Caminho
+        CustomContextMenuItem miCopyPath;
+        miCopyPath.id = 13;
+        miCopyPath.label = I18n::Tr(L"Copiar Caminho", L"Copy Path", L"Copiar Ruta");
+        miCopyPath.shortcut = L"Ctrl+Shift+C";
+        miCopyPath.icon = 0xE8C8;
+        customContextMenu.items.push_back(std::move(miCopyPath));
+
+        // Separator 2: Archives & Compression
+        CustomContextMenuItem miSep2;
+        miSep2.isSeparator = true;
+        customContextMenu.items.push_back(std::move(miSep2));
+
+        if (sel->isArchiveOrGameContainer) {
+            CustomContextMenuItem miExtract;
+            miExtract.id = 4;
+            miExtract.label = I18n::Tr(L"Extrair Tudo Aqui", L"Extract All Here", L"Extraer Todo Aqui");
+            miExtract.icon = 0xE8B7;
+            customContextMenu.items.push_back(std::move(miExtract));
+
+            std::wstring folderName = sel->name;
+            size_t dot = folderName.find_last_of(L'.');
+            if (dot != std::wstring::npos) folderName = folderName.substr(0, dot);
+            CustomContextMenuItem miExtractSub;
+            miExtractSub.id = 14;
+            miExtractSub.label = I18n::Tr(L"Descompactar para ", L"Extract to ", L"Descomprimir a ") + folderName + L"\\";
+            miExtractSub.icon = 0xE8B7;
+            customContextMenu.items.push_back(std::move(miExtractSub));
+        } else {
+            CustomContextMenuItem miZip;
+            miZip.id = 5;
+            miZip.label = I18n::Tr(L"Compactar para .ZIP", L"Compress to .ZIP", L"Comprimir a .ZIP");
+            miZip.icon = 0xE896;
+            customContextMenu.items.push_back(std::move(miZip));
+        }
+
+        // Separator 3: File Management & Analysis
+        CustomContextMenuItem miSep3;
+        miSep3.isSeparator = true;
+        customContextMenu.items.push_back(std::move(miSep3));
+
+        // 15. Renomear
+        CustomContextMenuItem miRename;
+        miRename.id = 15;
+        miRename.label = I18n::Tr(L"Renomear", L"Rename", L"Renombrar");
+        miRename.shortcut = L"F2";
+        miRename.icon = 0xE8AC;
+        customContextMenu.items.push_back(std::move(miRename));
+
+        // 16. Nova Pasta
+        CustomContextMenuItem miNewFolder;
+        miNewFolder.id = 16;
+        miNewFolder.label = I18n::Tr(L"Nova Pasta", L"New Folder", L"Nueva Carpeta");
+        miNewFolder.shortcut = L"Ctrl+Shift+N";
+        miNewFolder.icon = 0xE8F4;
+        customContextMenu.items.push_back(std::move(miNewFolder));
+
+        // 6. Calculate Hash
+        CustomContextMenuItem miHash;
+        miHash.id = 6;
+        miHash.label = I18n::Tr(L"Calcular Hash (Copiar)", L"Calculate Hash (Copy)", L"Calcular Hash (Copiar)");
+        miHash.icon = 0xE8C8;
+        customContextMenu.items.push_back(std::move(miHash));
+
+        // 7. Lock Hunter
+        CustomContextMenuItem miLock;
+        miLock.id = 7;
+        miLock.label = I18n::Tr(L"Lock Hunter (Processos)", L"Lock Hunter (Processes)", L"Lock Hunter (Procesos)");
+        miLock.icon = 0xE72E;
+        customContextMenu.items.push_back(std::move(miLock));
+
+        // Separator 4: Danger & Properties
+        CustomContextMenuItem miSep4;
+        miSep4.isSeparator = true;
+        customContextMenu.items.push_back(std::move(miSep4));
+
+        // 8. Delete
+        CustomContextMenuItem miDel;
+        miDel.id = 8;
+        miDel.label = I18n::Tr(L"Excluir", L"Delete", L"Eliminar");
+        miDel.shortcut = L"Del";
+        miDel.icon = 0xE74D;
+        miDel.isDanger = true;
+        customContextMenu.items.push_back(std::move(miDel));
+
+        // 17. Propriedades
+        CustomContextMenuItem miProps;
+        miProps.id = 17;
+        miProps.label = I18n::Tr(L"Propriedades", L"Properties", L"Propiedades");
+        miProps.shortcut = L"Alt+Enter";
+        miProps.icon = 0xE946;
+        customContextMenu.items.push_back(std::move(miProps));
+
+        customContextMenu.isOpen = true;
+        Invalidate();
+    }
+
+    void ExecuteCustomContextMenuCommand(int cmd, TerminalPane& pane) {
+        const auto* sel = pane.explorer.GetSelectedEntry();
+        if (!sel) return;
+
+        switch (cmd) {
+        case 1:
+            if (sel->isDirectory) {
+                pane.explorer.NavigateToDirectory(sel->fullPath, true);
+                UpdateExplorerPreview(pane);
+                SyncLinkedSplitPaneCwd(pane);
+            } else if (sel->isArchiveOrGameContainer) {
+                pane.explorer.EnterVirtualArchive(sel->fullPath);
+                UpdateExplorerPreview(pane);
+            } else {
+                ShellExecuteW(nullptr, L"open", sel->fullPath.c_str(), nullptr, pane.explorer.currentDirectory.c_str(), SW_SHOW);
+            }
+            break;
+        case 2:
+            if (!sel->isDirectory) {
+                if (pane.explorer.inVirtualArchive) {
+                    OpenVirtualArchiveEntryInEditor(pane, *sel);
+                } else {
+                    OpenEditorTab(sel->fullPath);
+                }
+            }
+            break;
+        case 3:
+            CreateNewTab(ShellMode::ModePW);
+            GetActivePane().cwd = sel->isDirectory ? sel->fullPath : pane.explorer.currentDirectory;
+            break;
+        case 4:
+            ExecuteExtractArchive(pane, false);
+            break;
+        case 5: {
+            std::wstring zipDst = sel->fullPath + L".zip";
+            std::vector<std::wstring> zipSources = { sel->fullPath };
+            CreateZipArchiveFromDisk(zipSources, zipDst);
+            pane.explorer.Refresh();
+            ShowToast(I18n::Tr(L"Arquivo compactado com sucesso!", L"File compressed successfully!", L"Archivo comprimido con exito!"));
+            break;
+        }
+        case 6:
+            ExecuteCalculateHash(pane);
+            break;
+        case 7:
+            ExecuteLockHunter(pane);
+            break;
+        case 8:
+            if (!pane.explorer.inVirtualArchive) {
+                if (sel->isDirectory) RemoveDirectoryW(sel->fullPath.c_str());
+                else DeleteFileW(sel->fullPath.c_str());
+                pane.explorer.Refresh();
+                UpdateExplorerPreview(pane);
+            }
+            break;
+        case 10: // Recortar
+            SetClipboardFiles({ sel->fullPath }, true);
+            ShowToast(I18n::Tr(L"Recortado para mover!", L"Cut for move!", L"Cortado para mover!"));
+            break;
+        case 11: // Copiar
+            SetClipboardFiles({ sel->fullPath }, false);
+            ShowToast(I18n::Tr(L"Copiado para a area de transferencia!", L"Copied to clipboard!", L"Copiado al portapapeles!"));
+            break;
+        case 12: // Colar
+            PasteClipboardFiles(pane);
+            break;
+        case 13: // Copiar Caminho
+            CopyTextToClipboard(hwnd, sel->fullPath);
+            ShowToast(I18n::Tr(L"Caminho copiado para a area de transferencia!", L"Path copied to clipboard!", L"Ruta copiada al portapapeles!"));
+            break;
+        case 14: // Descompactar para pasta
+            ExecuteExtractArchive(pane, true);
+            break;
+        case 15: // Renomear
+            ShowToast(I18n::Tr(L"Pressione F2 no item para renomear.", L"Press F2 on item to rename.", L"Presione F2 en el elemento para renombrar."));
+            break;
+        case 16: { // Nova Pasta
+            if (!pane.explorer.inVirtualArchive) {
+                std::wstring baseFolder = pane.explorer.currentDirectory + L"\\" + I18n::Tr(L"Nova Pasta", L"New Folder", L"Nueva Carpeta");
+                std::wstring folder = baseFolder;
+                int counter = 2;
+                while (GetFileAttributesW(folder.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    folder = baseFolder + L" (" + std::to_wstring(counter++) + L")";
+                }
+                CreateDirectoryW(folder.c_str(), nullptr);
+                pane.explorer.Refresh();
+                UpdateExplorerPreview(pane);
+                ShowToast(I18n::Tr(L"Nova pasta criada!", L"New folder created!", L"Nueva carpeta creada!"));
+            }
+            break;
+        }
+        case 17: { // Propriedades
+            if (!pane.explorer.inVirtualArchive) {
+                SHELLEXECUTEINFOW sei = { sizeof(sei) };
+                sei.cbSize = sizeof(sei);
+                sei.fMask = SEE_MASK_INVOKEIDLIST;
+                sei.hwnd = hwnd;
+                sei.lpVerb = L"properties";
+                sei.lpFile = sel->fullPath.c_str();
+                sei.nShow = SW_SHOW;
+                ShellExecuteExW(&sei);
+            } else {
+                std::wstring info = L"Arquivo VFS: " + sel->name + L"\n" +
+                                    L"Caminho Virtual: " + sel->fullPath + L"\n" +
+                                    L"Tamanho: " + sel->sizeFormatted + L" (" + std::to_wstring(sel->sizeBytes) + L" bytes)";
+                MessageBoxW(hwnd, info.c_str(), L"Propriedades VFS", MB_OK | MB_ICONINFORMATION);
+            }
+            break;
+        }
+        }
     }
 
     void OpenVirtualArchiveEntryInEditor(TerminalPane& pane, const ExplorerEntry& entry) {
@@ -813,83 +1430,93 @@ public:
         Invalidate();
     }
 
-    void OpenExplorerContextMenu(POINT pt, TerminalPane& pane) {
-        const auto* sel = pane.explorer.GetSelectedEntry();
-        if (!sel) return;
 
-        HMENU hMenu = CreatePopupMenu();
-        AppendMenuW(hMenu, MF_STRING, 1, I18n::Tr(L"Abrir / Explorar", L"Open / Explore", L"Abrir / Explorar"));
-        AppendMenuW(hMenu, MF_STRING, 2, I18n::Tr(L"Editar no Spet@Term Editor", L"Edit in Spet@Term Editor", L"Editar en Spet@Term Editor"));
-        AppendMenuW(hMenu, MF_STRING, 3, I18n::Tr(L"Abrir Terminal Aqui", L"Open Terminal Here", L"Abrir Terminal Aqui"));
-        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        if (sel->isArchiveOrGameContainer) {
-            AppendMenuW(hMenu, MF_STRING, 4, I18n::Tr(L"Extrair Tudo Aqui", L"Extract All Here", L"Extraer Todo Aqui"));
+
+    void OpenMediaTab(const std::wstring& path, bool isVideo, const std::wstring& displayName = L"") {
+        for (size_t i = 0; i < tabs.size(); ++i) {
+            if (tabs[i]->isEditor && tabs[i]->isMediaPlayback && _wcsicmp(tabs[i]->editorFilePath.c_str(), path.c_str()) == 0) {
+                activeTabIndex = static_cast<int>(i);
+                Invalidate();
+                return;
+            }
+        }
+
+        std::wstring fileName = displayName.empty() ? path : displayName;
+        size_t lastSlash = fileName.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) fileName = fileName.substr(lastSlash + 1);
+
+        auto newTab = std::make_unique<TerminalTab>();
+        newTab->id = nextTabId++;
+        newTab->isEditor = true;
+        newTab->isMediaPlayback = true;
+        newTab->isVideoPlayback = isVideo;
+        newTab->isAudioPlayback = !isVideo;
+        newTab->editorFilePath = path;
+        newTab->editorFileName = fileName;
+        newTab->mediaFilePath = path;
+        newTab->mediaTitle = fileName;
+        newTab->title = (isVideo ? L"[Video] " : L"[Audio] ") + fileName;
+
+        if (isVideo) {
+            renderer.previewMediaEngine.Load(path);
+            renderer.previewMediaEngine.Resume();
         } else {
-            AppendMenuW(hMenu, MF_STRING, 5, I18n::Tr(L"Compactar para .ZIP", L"Compress to .ZIP", L"Comprimir a .ZIP"));
+            audioPlayer.PlayFile(path);
         }
-        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hMenu, MF_STRING, 6, I18n::Tr(L"Calcular Hash (Copiar p/ Clipboard)", L"Calculate Hash (Copy to Clipboard)", L"Calcular Hash (Copiar al portapapeles)"));
-        AppendMenuW(hMenu, MF_STRING, 7, I18n::Tr(L"Lock Hunter (Processos em uso)", L"Lock Hunter (Processes in use)", L"Lock Hunter (Procesos en uso)"));
-        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hMenu, MF_STRING, 8, I18n::Tr(L"Excluir", L"Delete", L"Eliminar"));
 
-        POINT scrPt = pt;
-        ClientToScreen(hwnd, &scrPt);
-        int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_RIGHTBUTTON, scrPt.x, scrPt.y, 0, hwnd, nullptr);
-        DestroyMenu(hMenu);
+        tabs.push_back(std::move(newTab));
+        activeTabIndex = static_cast<int>(tabs.size()) - 1;
+        Invalidate();
+    }
 
-        switch (cmd) {
-        case 1:
-            if (sel->isDirectory) {
-                pane.explorer.NavigateToDirectory(sel->fullPath, true);
-                UpdateExplorerPreview(pane);
-                SyncLinkedSplitPaneCwd(pane);
-            } else if (sel->isArchiveOrGameContainer) {
-                pane.explorer.EnterVirtualArchive(sel->fullPath);
-                UpdateExplorerPreview(pane);
-            } else {
-                ShellExecuteW(nullptr, L"open", sel->fullPath.c_str(), nullptr, pane.explorer.currentDirectory.c_str(), SW_SHOW);
+    void Open3DTab(const std::wstring& path, const std::wstring& displayName = L"", std::span<const uint8_t> inMemData = {}) {
+        for (size_t i = 0; i < tabs.size(); ++i) {
+            if (tabs[i]->isEditor && tabs[i]->is3DPreviewTab && _wcsicmp(tabs[i]->editorFilePath.c_str(), path.c_str()) == 0) {
+                activeTabIndex = static_cast<int>(i);
+                Invalidate();
+                return;
             }
-            break;
-        case 2:
-            if (!sel->isDirectory) {
-                if (pane.explorer.inVirtualArchive) {
-                    OpenVirtualArchiveEntryInEditor(pane, *sel);
-                } else {
-                    OpenEditorTab(sel->fullPath);
-                }
-            }
-            break;
-        case 3:
-            CreateNewTab(ShellMode::ModePW);
-            GetActivePane().cwd = sel->isDirectory ? sel->fullPath : pane.explorer.currentDirectory;
-            break;
-        case 4:
-            ExecuteExtractAllVirtualArchive(pane);
-            break;
-        case 5: {
-            std::wstring zipDst = sel->fullPath + L".zip";
-            std::vector<std::wstring> zipSources = { sel->fullPath };
-            CreateZipArchiveFromDisk(zipSources, zipDst);
-            pane.explorer.Refresh();
-            ShowToast(I18n::Tr(L"Arquivo compactado com sucesso!", L"File compressed successfully!", L"Archivo comprimido con exito!"));
-            break;
         }
-        case 6:
-            ExecuteCalculateHash(pane);
-            break;
-        case 7:
-            ExecuteLockHunter(pane);
-            break;
-        case 8:
-            if (!pane.explorer.inVirtualArchive) {
-                if (sel->isDirectory) RemoveDirectoryW(sel->fullPath.c_str());
-                else DeleteFileW(sel->fullPath.c_str());
-                pane.explorer.Refresh();
-                UpdateExplorerPreview(pane);
-            }
-            break;
+
+        std::wstring fileName = displayName.empty() ? path : displayName;
+        size_t lastSlash = fileName.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) fileName = fileName.substr(lastSlash + 1);
+
+        auto newTab = std::make_unique<TerminalTab>();
+        newTab->id = nextTabId++;
+        newTab->isEditor = true;
+        newTab->is3DPreviewTab = true;
+        newTab->editorFilePath = path;
+        newTab->editorFileName = fileName;
+        newTab->title = L"[3D] " + fileName;
+
+        std::wstring ext = fileName;
+        size_t dot = ext.find_last_of(L'.');
+        std::wstring e = (dot != std::wstring::npos) ? ToLower(ext.substr(dot)) : L".glb";
+
+        if (!inMemData.empty()) {
+            renderer.preview3D.LoadModelFromMemory(inMemData, e, renderer.pD3DDevice, renderer.pWICFactory);
+        } else {
+            renderer.preview3D.LoadModelFromFile(path, renderer.pD3DDevice, renderer.pWICFactory);
         }
+
+        tabs.push_back(std::move(newTab));
+        activeTabIndex = static_cast<int>(tabs.size()) - 1;
+        Invalidate();
+    }
+
+    void OpenImageTabFromRgba(const std::wstring& path, const std::wstring& displayName, const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h) {
+        auto newTab = std::make_unique<TerminalTab>();
+        newTab->id = nextTabId++;
+        newTab->isEditor = true;
+        newTab->isImagePreview = true;
+        newTab->editorFilePath = path;
+        newTab->editorFileName = displayName;
+        newTab->title = L"[Img] " + displayName;
+        newTab->editorImageSize = D2D1::SizeF(static_cast<float>(w), static_cast<float>(h));
+        newTab->editorImageBitmap = renderer.CreateBitmapFromRgbaBytes(rgba.data(), w, h);
+        tabs.push_back(std::move(newTab));
+        activeTabIndex = static_cast<int>(tabs.size()) - 1;
         Invalidate();
     }
 
@@ -921,11 +1548,38 @@ public:
             newTab->isImagePreview = true;
             newTab->editorImageBitmap = renderer.LoadBitmapFromFile(path, newTab->editorImageSize);
         } else {
+            WIN32_FILE_ATTRIBUTE_DATA fad{};
+            if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) {
+                LARGE_INTEGER sz;
+                sz.LowPart = fad.nFileSizeLow;
+                sz.HighPart = fad.nFileSizeHigh;
+                if (sz.QuadPart > 5 * 1024 * 1024) {
+                    ShowToast(I18n::Tr(L"Arquivo muito grande (>5MB) para abrir no editor de texto.",
+                                       L"File is too large (>5MB) to open in text editor.",
+                                       L"Archivo demasiado grande (>5MB) para abrir en el editor."));
+                    return;
+                }
+            }
             std::ifstream inFile(path, std::ios::binary);
             if (inFile.is_open()) {
-                std::stringstream buffer;
-                buffer << inFile.rdbuf();
-                newTab->editorContent = Utf8ToWide(buffer.str());
+                std::vector<char> buffer(5 * 1024 * 1024);
+                inFile.read(buffer.data(), buffer.size());
+                std::streamsize bytesRead = inFile.gcount();
+                if (bytesRead > 0) {
+                    size_t checkLen = (std::min<size_t>)(static_cast<size_t>(bytesRead), 1024);
+                    bool isBinary = false;
+                    for (size_t i = 0; i < checkLen; ++i) {
+                        if (buffer[i] == '\0') { isBinary = true; break; }
+                    }
+                    if (isBinary) {
+                        ShowToast(I18n::Tr(L"Arquivo binario nao suportado pelo editor de texto.",
+                                           L"Binary file cannot be opened in text editor.",
+                                           L"Archivo binario no soportado por el editor."));
+                        return;
+                    }
+                    std::string str(buffer.data(), static_cast<size_t>(bytesRead));
+                    newTab->editorContent = Utf8ToWide(str);
+                }
             }
         }
 
@@ -1036,6 +1690,13 @@ public:
 
     void CloseTab(int index) {
         if (index < 0 || index >= static_cast<int>(tabs.size())) return;
+        if (tabs[index]->isMediaPlayback) {
+            if (tabs[index]->isVideoPlayback) {
+                renderer.previewMediaEngine.Load(L"none");
+            } else if (tabs[index]->isAudioPlayback) {
+                audioPlayer.Stop();
+            }
+        }
         if (tabs[index]->isEditor && tabs[index]->isDirty) {
             std::wstring msg = L"Deseja salvar as alteracoes feitas em \"" + tabs[index]->editorFileName + L"\" antes de fechar?";
             int res = MessageBoxW(hwnd, msg.c_str(), L"Salvar arquivo", MB_YESNOCANCEL | MB_ICONQUESTION);
@@ -1509,17 +2170,22 @@ public:
         float bodyH = settings.statusBarVisible ? (height - bodyY - 24.0f) : (height - bodyY);
         float bodyW = (snippetsPopoverOpen ? (width - 280.0f) : width) - bodyX;
 
-        if (isSidebarVisible) {
-            renderer.RenderWorkspaceSidebar(
-                currentTheme,
-                0.0f, bodyY, sidebarW, bodyH,
-                activeTab.GetActivePane().cwd,
-                gitInfo,
-                mousePos,
-                settings.language
-            );
+        bool isTerminalTab = !activeTab.isEditor && (activeTab.GetActivePane().paneMode == PaneMode::Terminal);
+        if (isTerminalTab) {
+            if (isSidebarVisible) {
+                renderer.RenderWorkspaceSidebar(
+                    currentTheme,
+                    0.0f, bodyY, sidebarW, bodyH,
+                    activeTab.GetActivePane().cwd,
+                    gitInfo,
+                    mousePos,
+                    settings.language
+                );
+            } else {
+                renderer.RenderSidebarClosedToggle(currentTheme, mousePos);
+            }
         } else {
-            renderer.RenderSidebarClosedToggle(currentTheme, mousePos);
+            renderer.sidebarToggleBtnRect = D2D1::RectF(0, 0, 0, 0);
         }
 
         if (activeTab.isEditor) {
@@ -1530,7 +2196,8 @@ public:
                 mousePos,
                 true,
                 cursorBlinkState,
-                settings.language
+                settings.language,
+                &audioPlayer
             );
         } else {
             bool isCtrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -1676,6 +2343,13 @@ public:
             if (!tip.empty()) {
                 renderer.RenderTooltip(tip, static_cast<float>(mousePos.x), static_cast<float>(mousePos.y), width, height);
             }
+        }
+
+        if (customContextMenu.isOpen) {
+            POINT clientMouse{};
+            GetCursorPos(&clientMouse);
+            ScreenToClient(hwnd, &clientMouse);
+            renderer.RenderCustomContextMenu(currentTheme, customContextMenu, clientMouse, width, height);
         }
 
         if (toastAlpha > 0.0f) {
@@ -1842,6 +2516,53 @@ public:
     }
 
     void OnKeyDown(WPARAM vk, LPARAM lp) {
+        if (customContextMenu.isOpen) {
+            if (vk == VK_ESCAPE) {
+                customContextMenu.Close();
+                Invalidate();
+                return;
+            }
+            if (vk == VK_DOWN) {
+                int n = static_cast<int>(customContextMenu.items.size());
+                int start = customContextMenu.hoveredIndex;
+                for (int i = 1; i <= n; ++i) {
+                    int next = (start + i) % n;
+                    if (!customContextMenu.items[next].isSeparator) {
+                        customContextMenu.hoveredIndex = next;
+                        break;
+                    }
+                }
+                Invalidate();
+                return;
+            }
+            if (vk == VK_UP) {
+                int n = static_cast<int>(customContextMenu.items.size());
+                int start = (customContextMenu.hoveredIndex <= 0) ? n : customContextMenu.hoveredIndex;
+                for (int i = 1; i <= n; ++i) {
+                    int next = (start - i + n) % n;
+                    if (!customContextMenu.items[next].isSeparator) {
+                        customContextMenu.hoveredIndex = next;
+                        break;
+                    }
+                }
+                Invalidate();
+                return;
+            }
+            if (vk == VK_RETURN) {
+                if (customContextMenu.hoveredIndex >= 0 &&
+                    customContextMenu.hoveredIndex < static_cast<int>(customContextMenu.items.size())) {
+                    const auto& item = customContextMenu.items[customContextMenu.hoveredIndex];
+                    if (!item.isSeparator) {
+                        int cmdId = item.id;
+                        customContextMenu.Close();
+                        ExecuteCustomContextMenuCommand(cmdId, GetActivePane());
+                        Invalidate();
+                        return;
+                    }
+                }
+            }
+        }
+
         bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
@@ -2289,6 +3010,10 @@ public:
             SplitHorizontal();
             return;
         }
+        if (ctrl && !shift && !alt && vk == 'E') {
+            CreateExplorerTab();
+            return;
+        }
         if (ctrl && shift && vk == 'E') {
             SplitVertical();
             return;
@@ -2560,25 +3285,7 @@ public:
                 return;
             }
             if (vk == VK_RETURN) {
-                const auto* sel = pane.explorer.GetSelectedEntry();
-                if (sel) {
-                    if (sel->isDirectory) {
-                        pane.explorer.NavigateToDirectory(sel->fullPath, true);
-                        UpdateExplorerPreview(pane);
-                        SyncLinkedSplitPaneCwd(pane);
-                    } else if (sel->isArchiveOrGameContainer) {
-                        pane.explorer.EnterVirtualArchive(sel->fullPath);
-                        UpdateExplorerPreview(pane);
-                    } else if (ToLower(sel->extension) == L".exe") {
-                        ShellExecuteW(nullptr, L"open", sel->fullPath.c_str(), nullptr, pane.explorer.currentDirectory.c_str(), SW_SHOW);
-                    } else {
-                        if (pane.explorer.inVirtualArchive) {
-                            OpenVirtualArchiveEntryInEditor(pane, *sel);
-                        } else {
-                            OpenEditorTab(sel->fullPath);
-                        }
-                    }
-                }
+                ActivateExplorerItem(pane);
                 Invalidate();
                 return;
             }
@@ -2600,6 +3307,42 @@ public:
             if (ctrl && vk == 'F') {
                 pane.expSearchFocused = true;
                 Invalidate();
+                return;
+            }
+            if (ctrl && !shift && vk == 'C') {
+                ExecuteCustomContextMenuCommand(11, pane);
+                return;
+            }
+            if (ctrl && !shift && vk == 'X') {
+                ExecuteCustomContextMenuCommand(10, pane);
+                return;
+            }
+            if (ctrl && !shift && vk == 'V') {
+                ExecuteCustomContextMenuCommand(12, pane);
+                return;
+            }
+            if (ctrl && shift && vk == 'C') {
+                ExecuteCustomContextMenuCommand(13, pane);
+                return;
+            }
+            if (ctrl && shift && vk == 'N') {
+                ExecuteCustomContextMenuCommand(16, pane);
+                return;
+            }
+            if (vk == VK_F2) {
+                ExecuteCustomContextMenuCommand(15, pane);
+                return;
+            }
+            if (alt && vk == VK_RETURN) {
+                ExecuteCustomContextMenuCommand(17, pane);
+                return;
+            }
+            if (ctrl && vk == 'E') {
+                ExecuteCustomContextMenuCommand(2, pane);
+                return;
+            }
+            if (ctrl && vk == 'T') {
+                ExecuteCustomContextMenuCommand(3, pane);
                 return;
             }
             if (vk == VK_ESCAPE) {
@@ -3204,6 +3947,25 @@ public:
     }
 
     void OnMouseDown(POINT pt) {
+        if (customContextMenu.isOpen) {
+            if (RendererD2D::PtInD2D1Rect(customContextMenu.bounds, pt)) {
+                for (const auto& item : customContextMenu.items) {
+                    if (!item.isSeparator && RendererD2D::PtInD2D1Rect(item.rect, pt)) {
+                        int cmdId = item.id;
+                        customContextMenu.Close();
+                        ExecuteCustomContextMenuCommand(cmdId, GetActivePane());
+                        Invalidate();
+                        return;
+                    }
+                }
+                return;
+            } else {
+                customContextMenu.Close();
+                Invalidate();
+                return;
+            }
+        }
+
         // Multi-line Paste Security Modal Clicks
         if (multiLinePasteModalOpen) {
             if (RendererD2D::PtInD2D1Rect(renderer.multiLinePasteConfirmBtnRect, pt)) {
@@ -3361,6 +4123,44 @@ public:
             GetActiveTab().SaveEditorFile();
             Invalidate();
             return;
+        }
+
+        // Media Tab Control Clicks
+        if (GetActiveTab().isEditor && GetActiveTab().isMediaPlayback) {
+            auto& mTab = GetActiveTab();
+            if (RendererD2D::PtInD2D1Rect(mTab.tabMediaPlayBtnRect, pt)) {
+                if (mTab.isVideoPlayback) {
+                    renderer.previewMediaEngine.TogglePause();
+                } else if (mTab.isAudioPlayback) {
+                    audioPlayer.TogglePause();
+                }
+                Invalidate();
+                return;
+            }
+            if (RendererD2D::PtInD2D1Rect(mTab.tabMediaStopBtnRect, pt)) {
+                if (mTab.isVideoPlayback) {
+                    renderer.previewMediaEngine.Stop();
+                } else if (mTab.isAudioPlayback) {
+                    audioPlayer.Stop();
+                }
+                Invalidate();
+                return;
+            }
+            if (RendererD2D::PtInD2D1Rect(mTab.tabMediaSeekRect, pt)) {
+                float barW = mTab.tabMediaSeekRect.right - mTab.tabMediaSeekRect.left;
+                if (barW > 0.0f) {
+                    float frac = (std::clamp)((pt.x - mTab.tabMediaSeekRect.left) / barW, 0.0f, 1.0f);
+                    if (mTab.isVideoPlayback) {
+                        double dur = renderer.previewMediaEngine.GetDurationSeconds();
+                        if (dur > 0.0) renderer.previewMediaEngine.Seek(dur * frac);
+                    } else if (mTab.isAudioPlayback) {
+                        double dur = audioPlayer.GetDurationSeconds();
+                        if (dur > 0.0) audioPlayer.Seek(dur * frac);
+                    }
+                    Invalidate();
+                    return;
+                }
+            }
         }
 
         // Onboarding Walkthrough Clicks
@@ -3820,13 +4620,13 @@ public:
                 if (RendererD2D::PtInD2D1Rect(mi.first, pt)) {
                     profileMenuOpen = false;
                     switch (mi.second) {
-                    case 0: CreateExplorerTab(); break;
-                    case 1: CreateNewTab(ShellMode::ModePW); break;
-                    case 2: CreateNewTab(ShellMode::ModeCMD); break;
+                    case 1: CreateExplorerTab(); break;
+                    case 2: CreateNewTab(ShellMode::ModePW); break;
                     case 3: LaunchAdminSession(); break;
-                    case 4: LaunchAdminSession(); break;
-                    case 5: SplitHorizontal(); break; // Split Right
-                    case 6: SplitVertical(); break;   // Split Down
+                    case 4: CreateNewTab(ShellMode::ModeCMD); break;
+                    case 5: LaunchAdminSession(); break;
+                    case 6: SplitHorizontal(); break; // Split Right
+                    case 7: SplitVertical(); break;   // Split Down
                     }
                     Invalidate();
                     return;
@@ -4150,39 +4950,45 @@ public:
             return;
         }
 
-        // Empty State Badges Clicks
-        for (const auto& eb : renderer.emptyStateBadges) {
-            if (RendererD2D::PtInD2D1Rect(eb.first, pt)) {
-                switch (eb.second) {
-                case 0:
-                    workfolderOpen = true;
-                    workfolderFilter.clear();
-                    workfolderSelectedIndex = 0;
-                    workfolderItems = ScanWorkfolder(GetActivePane().cwd);
-                    break;
-                case 1:
-                    timelineOpen = true;
-                    timelineSelectedIndex = 0;
-                    break;
-                case 2:
-                    if (!detectedTasks.empty()) {
-                        GetActivePane().inputLine = detectedTasks[0].command;
-                        GetActivePane().cursorPos = GetActivePane().inputLine.size();
-                        ExecuteInput();
+        // Empty State Badges Clicks (only when in terminal empty state)
+        auto& activePaneCheck = GetActivePane();
+        if (activePaneCheck.paneMode == PaneMode::Terminal && activePaneCheck.blocks.empty() && !activePaneCheck.activeRunningBlock) {
+            for (const auto& eb : renderer.emptyStateBadges) {
+                if (RendererD2D::PtInD2D1Rect(eb.first, pt)) {
+                    switch (eb.second) {
+                    case 0:
+                        workfolderOpen = true;
+                        workfolderFilter.clear();
+                        workfolderSelectedIndex = 0;
+                        workfolderItems = ScanWorkfolder(GetActivePane().cwd);
+                        break;
+                    case 1:
+                        timelineOpen = true;
+                        timelineSelectedIndex = 0;
+                        break;
+                    case 2:
+                        if (!detectedTasks.empty()) {
+                            GetActivePane().inputLine = detectedTasks[0].command;
+                            GetActivePane().cursorPos = GetActivePane().inputLine.size();
+                            ExecuteInput();
+                        }
+                        break;
+                    case 3:
+                        settingsOpen = true;
+                        break;
+                    case 4:
+                        paletteOpen = true;
+                        prePaletteTheme = currentTheme;
+                        paletteQuery.clear();
+                        paletteSelectedIndex = 0;
+                        break;
+                    case 5:
+                        CreateExplorerTab();
+                        break;
                     }
-                    break;
-                case 3:
-                    settingsOpen = true;
-                    break;
-                case 4:
-                    paletteOpen = true;
-                    prePaletteTheme = currentTheme;
-                    paletteQuery.clear();
-                    paletteSelectedIndex = 0;
-                    break;
+                    Invalidate();
+                    return;
                 }
-                Invalidate();
-                return;
             }
         }
 
@@ -4361,7 +5167,7 @@ public:
                 pane.expSearchFocused = false;
             }
             if (RendererD2D::PtInD2D1Rect(pane.expSearchModeBtnRect, pt)) {
-                pane.explorer.searchFastHddMode = !pane.explorer.searchFastHddMode;
+                pane.explorer.recursiveSearchMode = !pane.explorer.recursiveSearchMode;
                 Invalidate();
                 return;
             }
@@ -4407,6 +5213,17 @@ public:
             for (auto& drv : pane.explorer.drives) {
                 if (RendererD2D::PtInD2D1Rect(drv.pillRect, pt)) {
                     pane.explorer.NavigateToDirectory(drv.rootPath, true);
+                    UpdateExplorerPreview(pane);
+                    SyncLinkedSplitPaneCwd(pane);
+                    Invalidate();
+                    return;
+                }
+            }
+
+            // Quick Access pills click (Desktop, Downloads, Documents, User Profile)
+            for (auto& qa : pane.explorer.quickAccess) {
+                if (RendererD2D::PtInD2D1Rect(qa.pillRect, pt)) {
+                    pane.explorer.NavigateToDirectory(qa.fullPath, true);
                     UpdateExplorerPreview(pane);
                     SyncLinkedSplitPaneCwd(pane);
                     Invalidate();
@@ -4506,6 +5323,11 @@ public:
                     Invalidate();
                     return;
                 }
+                if (RendererD2D::PtInD2D1Rect(pane.exp3DFlipVBtnRect, pt)) {
+                    renderer.preview3D.ToggleFlipTextureV();
+                    Invalidate();
+                    return;
+                }
                 if (RendererD2D::PtInD2D1Rect(pane.expViewport3DRect, pt)) {
                     pane.isDragging3D = true;
                     pane.lastMouse3D = pt;
@@ -4519,13 +5341,22 @@ public:
                 if (RendererD2D::PtInD2D1Rect(pane.expActionPlayAudioBtnRect, pt)) {
                     if (audioPlayer.IsPlaying()) {
                         audioPlayer.TogglePause();
+                    } else if (audioPlayer.IsPaused()) {
+                        audioPlayer.TogglePause();
                     } else {
                         const auto* sel = pane.explorer.GetSelectedEntry();
                         if (sel) {
                             if (pane.explorer.inVirtualArchive) {
                                 auto audioBytes = pane.explorer.ExtractEntryToMemory(*sel);
                                 std::wstring lowerExt = ToLower(sel->extension);
-                                if (lowerExt == L".adx" || lowerExt == L".swav") {
+                                if (pane.explorer.activeArchive && pane.explorer.activeArchive->formatId == ArchiveFormatId::WAD) {
+                                    std::vector<uint8_t> playableWav;
+                                    if (ConvertDoomSoundToWav(audioBytes, playableWav)) {
+                                        audioPlayer.PlayWavBytes(playableWav, sel->name);
+                                    } else {
+                                        audioPlayer.PlayWavBytes(audioBytes, sel->name);
+                                    }
+                                } else if (lowerExt == L".adx" || lowerExt == L".swav") {
                                     std::vector<uint8_t> playableWav;
                                     if (ConvertGameAudioToWav(audioBytes, lowerExt, playableWav)) {
                                         audioPlayer.PlayWavBytes(playableWav, sel->name);
@@ -4561,6 +5392,44 @@ public:
                     audioPlayer.Stop();
                     Invalidate();
                     return;
+                }
+                if (RendererD2D::PtInD2D1Rect(pane.expActionAudioSeekRect, pt)) {
+                    float barW = pane.expActionAudioSeekRect.right - pane.expActionAudioSeekRect.left;
+                    if (barW > 0.0f) {
+                        float frac = (std::clamp)((pt.x - pane.expActionAudioSeekRect.left) / barW, 0.0f, 1.0f);
+                        double dur = audioPlayer.GetDurationSeconds();
+                        if (dur > 0.0) {
+                            audioPlayer.Seek(dur * frac);
+                            Invalidate();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Video Player Controls
+            if (pane.explorerPreviewIsVideo) {
+                if (RendererD2D::PtInD2D1Rect(pane.expActionPlayVideoBtnRect, pt)) {
+                    renderer.previewMediaEngine.TogglePause();
+                    Invalidate();
+                    return;
+                }
+                if (RendererD2D::PtInD2D1Rect(pane.expActionStopVideoBtnRect, pt)) {
+                    renderer.previewMediaEngine.Stop();
+                    Invalidate();
+                    return;
+                }
+                if (RendererD2D::PtInD2D1Rect(pane.expActionVideoSeekRect, pt)) {
+                    float barW = pane.expActionVideoSeekRect.right - pane.expActionVideoSeekRect.left;
+                    if (barW > 0.0f) {
+                        float frac = (std::clamp)((pt.x - pane.expActionVideoSeekRect.left) / barW, 0.0f, 1.0f);
+                        double dur = renderer.previewMediaEngine.GetDurationSeconds();
+                        if (dur > 0.0) {
+                            renderer.previewMediaEngine.Seek(dur * frac);
+                            Invalidate();
+                            return;
+                        }
+                    }
                 }
             }
 
@@ -4655,25 +5524,16 @@ public:
     void OnDoubleClick(POINT pt) {
         auto& activePane = GetActivePane();
         if (activePane.paneMode == PaneMode::FileExplorer && RendererD2D::PtInD2D1Rect(activePane.expTableRect, pt)) {
-            const auto* sel = activePane.explorer.GetSelectedEntry();
-            if (sel) {
-                if (sel->isDirectory) {
-                    activePane.explorer.NavigateToDirectory(sel->fullPath, true);
-                    UpdateExplorerPreview(activePane);
-                    SyncLinkedSplitPaneCwd(activePane);
-                } else if (sel->isArchiveOrGameContainer) {
-                    activePane.explorer.EnterVirtualArchive(sel->fullPath);
-                    UpdateExplorerPreview(activePane);
-                } else if (ToLower(sel->extension) == L".exe") {
-                    ShellExecuteW(nullptr, L"open", sel->fullPath.c_str(), nullptr, activePane.explorer.currentDirectory.c_str(), SW_SHOW);
-                } else {
-                    if (activePane.explorer.inVirtualArchive) {
-                        OpenVirtualArchiveEntryInEditor(activePane, *sel);
-                    } else {
-                        OpenEditorTab(sel->fullPath);
+            for (size_t r = 0; r < activePane.explorer.visibleEntryIndices.size(); ++r) {
+                size_t eIdx = activePane.explorer.visibleEntryIndices[r];
+                if (eIdx < activePane.explorer.entries.size()) {
+                    if (RendererD2D::PtInD2D1Rect(activePane.explorer.entries[eIdx].hitRect, pt)) {
+                        activePane.explorer.selectedVisibleIndex = static_cast<int>(r);
+                        break;
                     }
                 }
             }
+            ActivateExplorerItem(activePane);
             Invalidate();
             return;
         }
@@ -5177,11 +6037,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 needInvalidate = true;
             }
-            if (g_App->GetActivePane().isDragging3D) {
-                g_App->GetActivePane().isDragging3D = false;
-                ReleaseCapture();
-                g_App->Invalidate();
-            }
             if (g_App->isMouseSelecting) {
                 g_App->selectionEndPt = D2D1::Point2F(static_cast<float>(newPt.x), static_cast<float>(newPt.y));
                 float dx = fabsf(g_App->selectionEndPt.x - g_App->selectionStartPt.x);
@@ -5202,7 +6057,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_App && !g_App->settings.systemCursor) {
                 needInvalidate = true;
             }
-            if (g_App->settingsOpen || g_App->workfolderOpen || g_App->fileMenuOpen ||
+            if (g_App->customContextMenu.isOpen || g_App->settingsOpen || g_App->workfolderOpen || g_App->fileMenuOpen ||
                 g_App->profileMenuOpen || g_App->gitPopoverOpen || g_App->snippetsPopoverOpen ||
                 g_App->paletteOpen || g_App->searchOpen) {
                 needInvalidate = true;
@@ -5293,6 +6148,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 g_App->settings.SaveToFile();
                 g_App->Invalidate();
             }
+            auto& activeP = g_App->GetActivePane();
+            if (activeP.isDragging3D) {
+                activeP.isDragging3D = false;
+                ReleaseCapture();
+                g_App->Invalidate();
+            }
         }
         return 0;
 
@@ -5310,6 +6171,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_App) {
             POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             g_App->OnRightClick(pt);
+        }
+        return 0;
+
+    case WM_RBUTTONUP:
+        if (g_App) {
+            auto& activeP = g_App->GetActivePane();
+            if (activeP.isDragging3D) {
+                activeP.isDragging3D = false;
+                ReleaseCapture();
+                g_App->Invalidate();
+            }
         }
         return 0;
 
@@ -5451,6 +6323,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr)) return 1;
 
+    MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);
+
     HICON hAppIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(1));
     HICON hAppIconSm = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
 
@@ -5540,6 +6414,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_App = nullptr;
     appPtr.reset();
     SpriteAtlas::Instance().Shutdown();
+    MFShutdown();
     CoUninitialize();
     return exitCode;
 }

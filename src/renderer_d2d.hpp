@@ -1690,7 +1690,7 @@ public:
         if (!pRenderTarget || suppressEmptyState) return;
 
         float cardW = (std::min)(560.0f, pw - 40.0f);
-        float cardH = 270.0f;
+        float cardH = 320.0f;
         float cardX = px + (pw - cardW) * 0.5f;
         float cardY = py + (ph - cardH) * 0.40f;
         if (cardY < py + 12.0f) cardY = py + 12.0f;
@@ -1716,16 +1716,17 @@ public:
         (void)language;
         struct Row { int id; std::vector<std::wstring> keys; std::wstring label; };
         std::vector<Row> rows = {
-            { 0, { L"Ctrl", L"B" },  I18n::Tr(L"Explorador", L"Workspace", L"Explorador") },
+            { 0, { L"Ctrl", L"B" },  I18n::Tr(L"Workspace", L"Workspace", L"Workspace") },
             { 1, { L"Ctrl", L"R" },  I18n::Tr(L"Historico", L"History", L"Historial") },
             { 3, { L"Ctrl", L"," },  I18n::Tr(L"Configuracoes", L"Settings", L"Ajustes") },
-            { 4, { L"Ctrl", L"Shift", L"P" }, I18n::Tr(L"Comandos", L"Commands", L"Comandos") }
+            { 4, { L"Ctrl", L"Shift", L"P" }, I18n::Tr(L"Comandos", L"Commands", L"Comandos") },
+            { 5, { L"Ctrl", L"E" },  I18n::Tr(L"File Explorer", L"File Explorer", L"Explorador de Archivos") }
         };
         float rowW = 265.0f, rowH = 36.0f, gap = 14.0f;
         float startX = cardX + (cardW - rowW * 2.0f - gap) * 0.5f;
         float y0 = cardY + 154.0f;
         for (size_t i = 0; i < rows.size(); ++i) {
-            float bx = startX + (i % 2) * (rowW + gap);
+            float bx = (i == 4) ? (cardX + (cardW - rowW) * 0.5f) : (startX + (i % 2) * (rowW + gap));
             float by = y0 + (i / 2) * (rowH + 10.0f);
             D2D1_RECT_F r = D2D1::RectF(bx, by, bx + rowW, by + rowH);
             emptyStateBadges.push_back({ r, rows[i].id });
@@ -2250,6 +2251,8 @@ public:
         // Render Empty State HUD if there are no blocks and no active command running
         if (pane.blocks.empty() && !pane.activeRunningBlock) {
             RenderEmptyStateHud(theme, pane.cwd, gitInfo, detectedTasks, px, py, pw, scrollClipH, mousePos);
+        } else {
+            emptyStateBadges.clear();
         }
 
         // Render Command Blocks (#1)
@@ -2879,12 +2882,12 @@ public:
 
         std::vector<ProfileItemDef> items = {
             { 1, I18n::Get(StringId::Launcher_FileExplorer), L"Ctrl+E", "folder_16.png", true },
-            { 2, L"PowerShell", L"pw", "pw_bolt_16.png", false },
-            { 3, I18n::Get(StringId::Launcher_PowerShellAdmin), L"UAC", "shield_16.png", false },
-            { 4, L"Command Prompt", L"cmd", "cmd_prompt_16.png", false },
-            { 5, I18n::Get(StringId::Launcher_CmdAdmin), L"UAC", "shield_16.png", true },
-            { 6, I18n::Get(StringId::ProfileMenu_SplitRight), L"Alt+Shift+D", "layers_16.png", false },
-            { 7, I18n::Get(StringId::ProfileMenu_SplitDown), L"Alt+Shift+S", "layers_16.png", false }
+            { 2, L"PowerShell", L"pw", "terminal_16.png", false },
+            { 3, I18n::Get(StringId::Launcher_PowerShellAdmin), L"UAC", "terminal_16.png", false },
+            { 4, L"Command Prompt", L"cmd", "terminal_window.png", false },
+            { 5, I18n::Get(StringId::Launcher_CmdAdmin), L"UAC", "terminal_window.png", true },
+            { 6, I18n::Get(StringId::ProfileMenu_SplitRight), L"Alt+Shift+D", "copy_16.png", false },
+            { 7, I18n::Get(StringId::ProfileMenu_SplitDown), L"Alt+Shift+S", "copy_16.png", false }
         };
 
         int dividerCount = 2;
@@ -3596,7 +3599,8 @@ public:
         POINT mousePos,
         bool hasFocus,
         bool cursorBlink,
-        const std::string& language = "en-US"
+        const std::string& language = "en-US",
+        SpetaAudioPlayer* pAudioPlayer = nullptr
     ) {
         if (!pRenderTarget || pw <= 0.0f || ph <= 0.0f) return;
         D2D1_RECT_F bodyR = D2D1::RectF(px, py, px + pw, py + ph);
@@ -3634,7 +3638,142 @@ public:
         float contentY = py + barH;
         float contentH = ph - barH;
 
-        if (tab.isImagePreview && tab.editorImageBitmap) {
+        if (tab.isMediaPlayback) {
+            float ctrlH = 64.0f;
+            if (tab.isVideoPlayback) {
+                ID2D1Bitmap* vBmp = previewMediaEngine.GetCurrentBitmap();
+                D2D1_RECT_F vArea = D2D1::RectF(px, contentY, px + pw, py + ph - ctrlH);
+                if (vBmp) {
+                    D2D1_SIZE_F sz = vBmp->GetSize();
+                    float fitScale = (std::min)((vArea.right - vArea.left) / (sz.width > 0 ? sz.width : 1.0f),
+                                                (vArea.bottom - vArea.top) / (sz.height > 0 ? sz.height : 1.0f));
+                    float dstW = sz.width * fitScale;
+                    float dstH = sz.height * fitScale;
+                    float dstX = vArea.left + ((vArea.right - vArea.left) - dstW) * 0.5f;
+                    float dstY = vArea.top + ((vArea.bottom - vArea.top) - dstH) * 0.5f;
+                    D2D1_RECT_F dstR = D2D1::RectF(dstX, dstY, dstX + dstW, dstY + dstH);
+                    pRenderTarget->DrawBitmap(vBmp, dstR);
+                } else {
+                    DrawText(L"Video Playback Stream Initializing...", px + 40.0f, contentY + 40.0f, ColorHex(0x94A3B8), pUIFormat);
+                }
+
+                // Control Bar
+                D2D1_RECT_F barR = D2D1::RectF(px, py + ph - ctrlH, px + pw, py + ph);
+                pSolidBrush->SetColor(ColorHex(0x13131C));
+                pRenderTarget->FillRectangle(barR, pSolidBrush);
+                pSolidBrush->SetColor(ColorHex(0x232332));
+                pRenderTarget->DrawLine(D2D1::Point2F(barR.left, barR.top), D2D1::Point2F(barR.right, barR.top), pSolidBrush, 1.0f);
+
+                tab.tabMediaPlayBtnRect = D2D1::RectF(barR.left + 24.0f, barR.top + 18.0f, barR.left + 94.0f, barR.bottom - 14.0f);
+                tab.tabMediaStopBtnRect = D2D1::RectF(barR.left + 104.0f, barR.top + 18.0f, barR.left + 168.0f, barR.bottom - 14.0f);
+
+                auto drawTabBtn = [&](const D2D1_RECT_F& r, const std::wstring& lbl) {
+                    pSolidBrush->SetColor(PtInD2D1Rect(r, mousePos) ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush);
+                    pSolidBrush->SetColor(ColorHex(0x38384E));
+                    pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush, 1.0f);
+                    DrawText(lbl, r.left + 12.0f, r.top + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+                };
+
+                drawTabBtn(tab.tabMediaPlayBtnRect, previewMediaEngine.IsPaused() ? L"Play" : L"Pause");
+                drawTabBtn(tab.tabMediaStopBtnRect, L"Stop");
+
+                double curSec = previewMediaEngine.GetPositionSeconds();
+                double durSec = previewMediaEngine.GetDurationSeconds();
+                wchar_t tBuf[64];
+                int cM = static_cast<int>(curSec) / 60, cS = static_cast<int>(curSec) % 60;
+                int dM = static_cast<int>(durSec) / 60, dS = static_cast<int>(durSec) % 60;
+                swprintf_s(tBuf, L"%02d:%02d / %02d:%02d", cM, cS, dM, dS);
+                DrawText(tBuf, barR.left + 180.0f, barR.top + 22.0f, ColorHex(0xCBD5E1), pUIFormatSmall);
+
+                // Seekbar
+                tab.tabMediaSeekRect = D2D1::RectF(barR.left + 24.0f, barR.top + 6.0f, barR.right - 24.0f, barR.top + 14.0f);
+                pSolidBrush->SetColor(ColorHex(0x28283A));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(tab.tabMediaSeekRect, 3.0f, 3.0f), pSolidBrush);
+                float progFrac = (durSec > 0.0) ? static_cast<float>(curSec / durSec) : 0.0f;
+                progFrac = (std::clamp)(progFrac, 0.0f, 1.0f);
+                float seekFillW = (tab.tabMediaSeekRect.right - tab.tabMediaSeekRect.left) * progFrac;
+                D2D1_RECT_F fillR = D2D1::RectF(tab.tabMediaSeekRect.left, tab.tabMediaSeekRect.top, tab.tabMediaSeekRect.left + seekFillW, tab.tabMediaSeekRect.bottom);
+                pSolidBrush->SetColor(ColorHex(0x3B82F6));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(fillR, 3.0f, 3.0f), pSolidBrush);
+                D2D1_ELLIPSE thumb = D2D1::Ellipse(D2D1::Point2F(tab.tabMediaSeekRect.left + seekFillW, (tab.tabMediaSeekRect.top + tab.tabMediaSeekRect.bottom) * 0.5f), 5.0f, 5.0f);
+                pSolidBrush->SetColor(ColorHex(0xFFFFFF));
+                pRenderTarget->FillEllipse(thumb, pSolidBrush);
+            } else if (tab.isAudioPlayback && pAudioPlayer) {
+                // Audio Player in Tab
+                float cardW = (std::min)(600.0f, pw - 48.0f);
+                float cardH = 240.0f;
+                float cardX = px + (pw - cardW) * 0.5f;
+                float cardY = contentY + (contentH - cardH) * 0.5f;
+                D2D1_RECT_F cardR = D2D1::RectF(cardX, cardY, cardX + cardW, cardY + cardH);
+
+                pSolidBrush->SetColor(ColorHex(0x181824));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(cardR, 8.0f, 8.0f), pSolidBrush);
+                pSolidBrush->SetColor(ColorHex(0x2E2E3E));
+                pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(cardR, 8.0f, 8.0f), pSolidBrush, 1.0f);
+
+                DrawText(tab.mediaTitle.empty() ? tab.editorFileName : tab.mediaTitle, cardX + 24.0f, cardY + 20.0f, ColorHex(0xF8FAFC), pUIFormatBold);
+
+                tab.tabMediaPlayBtnRect = D2D1::RectF(cardX + 24.0f, cardY + 54.0f, cardX + 94.0f, cardY + 86.0f);
+                tab.tabMediaStopBtnRect = D2D1::RectF(cardX + 104.0f, cardY + 54.0f, cardX + 164.0f, cardY + 86.0f);
+
+                auto drawTabBtn = [&](const D2D1_RECT_F& r, const std::wstring& lbl) {
+                    pSolidBrush->SetColor(PtInD2D1Rect(r, mousePos) ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush);
+                    pSolidBrush->SetColor(ColorHex(0x38384E));
+                    pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush, 1.0f);
+                    DrawText(lbl, r.left + 12.0f, r.top + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+                };
+
+                drawTabBtn(tab.tabMediaPlayBtnRect, pAudioPlayer->IsPlaying() ? L"Pause" : (pAudioPlayer->IsPaused() ? L"Resume" : L"Play"));
+                drawTabBtn(tab.tabMediaStopBtnRect, L"Stop");
+
+                double curSec = pAudioPlayer->GetPositionSeconds();
+                double durSec = pAudioPlayer->GetDurationSeconds();
+                wchar_t tBuf[64];
+                int cM = static_cast<int>(curSec) / 60, cS = static_cast<int>(curSec) % 60;
+                int dM = static_cast<int>(durSec) / 60, dS = static_cast<int>(durSec) % 60;
+                swprintf_s(tBuf, L"%02d:%02d / %02d:%02d", cM, cS, dM, dS);
+                DrawText(tBuf, cardX + 180.0f, cardY + 60.0f, ColorHex(0xCBD5E1), pUIFormatSmall);
+
+                // Seekbar
+                tab.tabMediaSeekRect = D2D1::RectF(cardX + 24.0f, cardY + 98.0f, cardX + cardW - 24.0f, cardY + 106.0f);
+                pSolidBrush->SetColor(ColorHex(0x28283A));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(tab.tabMediaSeekRect, 3.0f, 3.0f), pSolidBrush);
+                float progFrac = (durSec > 0.0) ? static_cast<float>(curSec / durSec) : 0.0f;
+                progFrac = (std::clamp)(progFrac, 0.0f, 1.0f);
+                float seekFillW = (tab.tabMediaSeekRect.right - tab.tabMediaSeekRect.left) * progFrac;
+                D2D1_RECT_F fillR = D2D1::RectF(tab.tabMediaSeekRect.left, tab.tabMediaSeekRect.top, tab.tabMediaSeekRect.left + seekFillW, tab.tabMediaSeekRect.bottom);
+                pSolidBrush->SetColor(ColorHex(0x8B5CF6));
+                pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(fillR, 3.0f, 3.0f), pSolidBrush);
+                D2D1_ELLIPSE thumb = D2D1::Ellipse(D2D1::Point2F(tab.tabMediaSeekRect.left + seekFillW, (tab.tabMediaSeekRect.top + tab.tabMediaSeekRect.bottom) * 0.5f), 5.0f, 5.0f);
+                pSolidBrush->SetColor(ColorHex(0xFFFFFF));
+                pRenderTarget->FillEllipse(thumb, pSolidBrush);
+
+                // Waveform spectrum
+                float waveY = cardY + 120.0f;
+                float waveH = 90.0f;
+                float barW = (cardW - 48.0f) / 64.0f;
+                for (int b = 0; b < 64; ++b) {
+                    float peak = (std::clamp)(pAudioPlayer->waveformPeaks[b], 0.05f, 1.0f);
+                    float bH = waveH * peak;
+                    D2D1_RECT_F barR = D2D1::RectF(cardX + 24.0f + b * barW, waveY + waveH - bH, cardX + 24.0f + (b + 1) * barW - 1.0f, waveY + waveH);
+                    pSolidBrush->SetColor(ColorHex(0x8B5CF6));
+                    pRenderTarget->FillRectangle(barR, pSolidBrush);
+                }
+            }
+        } else if (tab.is3DPreviewTab) {
+            D2D1_RECT_F vpR = D2D1::RectF(px + 20.0f, contentY + 10.0f, px + pw - 20.0f, py + ph - 20.0f);
+            float vW = vpR.right - vpR.left;
+            float vH = vpR.bottom - vpR.top;
+            if (vW > 10.0f && vH > 10.0f) {
+                ID2D1Bitmap1* pBmp = preview3D.RenderFrame(pD3DDevice, pD3DContext, pD2DContext, 0.016f, static_cast<uint32_t>(vW), static_cast<uint32_t>(vH));
+                if (pBmp) {
+                    pRenderTarget->DrawBitmap(pBmp, vpR);
+                }
+            }
+            DrawText(L"3D Model View - Drag with Left Mouse to Rotate, Scroll to Zoom", px + 30.0f, py + ph - 40.0f, ColorHex(0x94A3B8), pUIFormatSmall);
+        } else if (tab.isImagePreview && tab.editorImageBitmap) {
             // Image Preview mode
             float maxW = pw - 40.0f;
             float maxH = contentH - 40.0f;
@@ -5492,8 +5631,8 @@ public:
         if (!pRenderTarget || pw <= 0.0f || ph <= 0.0f) return;
         D2D1_RECT_F bodyR = D2D1::RectF(px, py, px + pw, py + ph);
 
-        // Body Background (#0E0E14)
-        pSolidBrush->SetColor(ColorHex(0x0E0E14));
+        // Body Background (Translucent Acrylic over wallpaper)
+        pSolidBrush->SetColor(ColorRgba(0.06f, 0.06f, 0.09f, 0.55f));
         pRenderTarget->FillRectangle(bodyR, pSolidBrush);
 
         float centerX = px + pw * 0.5f;
@@ -5519,10 +5658,10 @@ public:
 
         std::vector<LauncherCardDef> cards = {
             { 0, L"[ 1 ]", I18n::Get(StringId::Launcher_FileExplorer), I18n::Get(StringId::Launcher_FileExplorerDesc), "folder_16.png", false },
-            { 1, L"[ 2 ]", I18n::Get(StringId::Launcher_PowerShell), I18n::Get(StringId::Launcher_PowerShellDesc), "pw_bolt_16.png", false },
-            { 2, L"[ 3 ]", I18n::Get(StringId::Launcher_PowerShellAdmin), I18n::Get(StringId::Launcher_PowerShellAdminDesc), "shield_16.png", true },
-            { 3, L"[ 4 ]", I18n::Get(StringId::Launcher_Cmd), I18n::Get(StringId::Launcher_CmdDesc), "cmd_prompt_16.png", false },
-            { 4, L"[ 5 ]", I18n::Get(StringId::Launcher_CmdAdmin), I18n::Get(StringId::Launcher_CmdAdminDesc), "shield_16.png", true }
+            { 1, L"[ 2 ]", I18n::Get(StringId::Launcher_PowerShell), I18n::Get(StringId::Launcher_PowerShellDesc), "terminal_16.png", false },
+            { 2, L"[ 3 ]", I18n::Get(StringId::Launcher_PowerShellAdmin), I18n::Get(StringId::Launcher_PowerShellAdminDesc), "terminal_16.png", true },
+            { 3, L"[ 4 ]", I18n::Get(StringId::Launcher_Cmd), I18n::Get(StringId::Launcher_CmdDesc), "terminal_window.png", false },
+            { 4, L"[ 5 ]", I18n::Get(StringId::Launcher_CmdAdmin), I18n::Get(StringId::Launcher_CmdAdminDesc), "terminal_window.png", true }
         };
 
         float cardW = (std::min)(540.0f, pw - 48.0f);
@@ -5540,7 +5679,7 @@ public:
             if (hov) pane.hoveredLauncherCard = static_cast<int>(i);
             bool isSel = (pane.selectedLauncherCard == static_cast<int>(i));
 
-            pSolidBrush->SetColor(hov ? ColorHex(0x1E1E2C) : (isSel ? ColorHex(0x181824) : ColorHex(0x14141E)));
+            pSolidBrush->SetColor(hov ? ColorRgba(0.18f, 0.18f, 0.28f, 0.85f) : (isSel ? ColorRgba(0.15f, 0.15f, 0.24f, 0.80f) : ColorRgba(0.10f, 0.10f, 0.16f, 0.72f)));
             pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(cr, 6.0f, 6.0f), pSolidBrush);
 
             pSolidBrush->SetColor(hov ? theme.accent : (isSel ? ColorHex(0x3E3E56) : ColorHex(0x242434)));
@@ -5554,7 +5693,7 @@ public:
 
             float kw = MeasureStringWidth(cards[i].keyBadge, pUIFormatBold);
             D2D1_RECT_F badgeR = D2D1::RectF(cardLeft + cardW - kw - 24.0f, curCardY + (cardH - 22.0f) * 0.5f, cardLeft + cardW - 12.0f, curCardY + (cardH + 22.0f) * 0.5f);
-            pSolidBrush->SetColor(ColorHex(0x101018));
+            pSolidBrush->SetColor(ColorRgba(0.08f, 0.08f, 0.14f, 0.80f));
             pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(badgeR, 4.0f, 4.0f), pSolidBrush);
             pSolidBrush->SetColor(hov ? theme.accent : ColorHex(0x323246));
             pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(badgeR, 4.0f, 4.0f), pSolidBrush, 1.0f);
@@ -5577,9 +5716,9 @@ public:
                                 bool isSplitView, POINT mousePos) {
         if (!pRenderTarget || pw <= 0.0f || ph <= 0.0f) return;
 
-        // Background
+        // Background (Translucent Acrylic over wallpaper)
         D2D1_RECT_F fullRect = D2D1::RectF(px, py, px + pw, py + ph);
-        pSolidBrush->SetColor(ColorHex(0x101016));
+        pSolidBrush->SetColor(ColorRgba(0.06f, 0.06f, 0.10f, 0.65f));
         pRenderTarget->FillRectangle(fullRect, pSolidBrush);
 
         float topNavH = 32.0f;
@@ -5592,7 +5731,7 @@ public:
         // 1. TOP NAVIGATION BAR (Back, Up, Refresh, Breadcrumb, Search)
         // ====================================================================
         D2D1_RECT_F topNavR = D2D1::RectF(px, py, px + pw, py + topNavH);
-        pSolidBrush->SetColor(ColorHex(0x161620));
+        pSolidBrush->SetColor(ColorRgba(0.09f, 0.09f, 0.14f, 0.85f));
         pRenderTarget->FillRectangle(topNavR, pSolidBrush);
         pSolidBrush->SetColor(ColorHex(0x222230));
         pRenderTarget->DrawLine(D2D1::Point2F(px, py + topNavH), D2D1::Point2F(px + pw, py + topNavH), pSolidBrush, 1.0f);
@@ -5601,34 +5740,62 @@ public:
         float btnY = py + 4.0f;
         float btnH = 24.0f;
 
-        // Back Button
+        // Back Button (Geometric Clean Chevron)
         pane.expBackBtnRect = D2D1::RectF(curX, btnY, curX + 26.0f, btnY + btnH);
         bool backHov = PtInD2D1Rect(pane.expBackBtnRect, mousePos);
         pSolidBrush->SetColor(backHov ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expBackBtnRect, 4.0f, 4.0f), pSolidBrush);
-        pSolidBrush->SetColor(ColorHex(0x323246));
+        pSolidBrush->SetColor(backHov ? theme.accent : ColorHex(0x323246));
         pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expBackBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
-        DrawText(L"<", pane.expBackBtnRect.left + 9.0f, btnY + 3.0f, backHov ? theme.accent : ColorHex(0xCCCCCC), pUIFormatBold);
+        {
+            float midX = (pane.expBackBtnRect.left + pane.expBackBtnRect.right) * 0.5f;
+            float midY = (pane.expBackBtnRect.top + pane.expBackBtnRect.bottom) * 0.5f;
+            pSolidBrush->SetColor(backHov ? theme.accent : ColorHex(0xCBD5E1));
+            pRenderTarget->DrawLine(D2D1::Point2F(midX + 2.0f, midY - 4.5f), D2D1::Point2F(midX - 2.5f, midY), pSolidBrush, 1.8f);
+            pRenderTarget->DrawLine(D2D1::Point2F(midX - 2.5f, midY), D2D1::Point2F(midX + 2.0f, midY + 4.5f), pSolidBrush, 1.8f);
+        }
         curX += 30.0f;
 
-        // Up Button
+        // Up Button (Geometric Clean Chevron Up)
         pane.expUpBtnRect = D2D1::RectF(curX, btnY, curX + 26.0f, btnY + btnH);
         bool upHov = PtInD2D1Rect(pane.expUpBtnRect, mousePos);
         pSolidBrush->SetColor(upHov ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expUpBtnRect, 4.0f, 4.0f), pSolidBrush);
-        pSolidBrush->SetColor(ColorHex(0x323246));
+        pSolidBrush->SetColor(upHov ? theme.accent : ColorHex(0x323246));
         pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expUpBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
-        DrawText(L"^", pane.expUpBtnRect.left + 9.0f, btnY + 3.0f, upHov ? theme.accent : ColorHex(0xCCCCCC), pUIFormatBold);
+        {
+            float midX = (pane.expUpBtnRect.left + pane.expUpBtnRect.right) * 0.5f;
+            float midY = (pane.expUpBtnRect.top + pane.expUpBtnRect.bottom) * 0.5f;
+            pSolidBrush->SetColor(upHov ? theme.accent : ColorHex(0xCBD5E1));
+            pRenderTarget->DrawLine(D2D1::Point2F(midX - 4.5f, midY + 2.0f), D2D1::Point2F(midX, midY - 2.5f), pSolidBrush, 1.8f);
+            pRenderTarget->DrawLine(D2D1::Point2F(midX, midY - 2.5f), D2D1::Point2F(midX + 4.5f, midY + 2.0f), pSolidBrush, 1.8f);
+        }
         curX += 30.0f;
 
-        // Refresh Button
+        // Refresh Button (Geometric Clean Circle Arc + Arrow)
         pane.expRefreshBtnRect = D2D1::RectF(curX, btnY, curX + 26.0f, btnY + btnH);
         bool refHov = PtInD2D1Rect(pane.expRefreshBtnRect, mousePos);
         pSolidBrush->SetColor(refHov ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
         pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expRefreshBtnRect, 4.0f, 4.0f), pSolidBrush);
-        pSolidBrush->SetColor(ColorHex(0x323246));
+        pSolidBrush->SetColor(refHov ? theme.accent : ColorHex(0x323246));
         pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(pane.expRefreshBtnRect, 4.0f, 4.0f), pSolidBrush, 1.0f);
-        DrawText(L"R", pane.expRefreshBtnRect.left + 8.0f, btnY + 3.0f, refHov ? theme.accent : ColorHex(0xCCCCCC), pUIFormatSmall);
+        {
+            float midX = (pane.expRefreshBtnRect.left + pane.expRefreshBtnRect.right) * 0.5f;
+            float midY = (pane.expRefreshBtnRect.top + pane.expRefreshBtnRect.bottom) * 0.5f;
+            pSolidBrush->SetColor(refHov ? theme.accent : ColorHex(0xCBD5E1));
+            float r = 4.5f;
+            const int kArcPts = 7;
+            D2D1_POINT_2F arcPts[kArcPts];
+            for (int a = 0; a < kArcPts; ++a) {
+                float angle = (-210.0f + static_cast<float>(a) * 45.0f) * 3.14159265f / 180.0f;
+                arcPts[a] = D2D1::Point2F(midX + r * std::cos(angle), midY + r * std::sin(angle));
+            }
+            for (int a = 0; a < kArcPts - 1; ++a) {
+                pRenderTarget->DrawLine(arcPts[a], arcPts[a + 1], pSolidBrush, 1.6f);
+            }
+            pRenderTarget->DrawLine(arcPts[0], D2D1::Point2F(arcPts[0].x - 1.5f, arcPts[0].y - 3.5f), pSolidBrush, 1.6f);
+            pRenderTarget->DrawLine(arcPts[0], D2D1::Point2F(arcPts[0].x + 3.0f, arcPts[0].y - 2.0f), pSolidBrush, 1.6f);
+        }
         curX += 36.0f;
 
         // Search Box (Right side)
@@ -5685,16 +5852,16 @@ public:
         // ====================================================================
         float stripY = py + topNavH;
         D2D1_RECT_F stripR = D2D1::RectF(px, stripY, px + pw, stripY + driveStripH);
-        pSolidBrush->SetColor(ColorHex(0x13131A));
+        pSolidBrush->SetColor(ColorRgba(0.08f, 0.08f, 0.12f, 0.85f));
         pRenderTarget->FillRectangle(stripR, pSolidBrush);
-        pSolidBrush->SetColor(ColorHex(0x1F1F2B));
+        pSolidBrush->SetColor(ColorHex(0x222232));
         pRenderTarget->DrawLine(D2D1::Point2F(px, stripY + driveStripH), D2D1::Point2F(px + pw, stripY + driveStripH), pSolidBrush, 1.0f);
 
         float dX = px + 8.0f;
         float dBtnY = stripY + 2.0f;
         float dBtnH = 22.0f;
 
-        // Drive pills
+        // Drive pills (Neutral border, highlighted on hover, no false SSD claims)
         for (auto& drv : pane.explorer.drives) {
             std::wstring drvLbl = drv.displayName;
             float dW = MeasureStringWidth(drvLbl, pUIFormatSmall) + 12.0f;
@@ -5704,7 +5871,7 @@ public:
             bool drvHov = PtInD2D1Rect(drv.pillRect, mousePos);
             pSolidBrush->SetColor(drvHov ? ColorHex(0x222232) : ColorHex(0x181822));
             pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(drv.pillRect, 3.0f, 3.0f), pSolidBrush);
-            pSolidBrush->SetColor(drv.isSSD ? ColorHex(0x00FFBF) : ColorHex(0xF59E0B));
+            pSolidBrush->SetColor(drvHov ? theme.accent : ColorHex(0x323246));
             pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(drv.pillRect, 3.0f, 3.0f), pSolidBrush, 1.0f);
             DrawText(drvLbl, dX + 6.0f, dBtnY + 3.0f, drvHov ? ColorHex(0xFFFFFF) : ColorHex(0xB0B0C4), pUIFormatSmall);
             dX += dW + 6.0f;
@@ -5794,7 +5961,17 @@ public:
         const auto& visibleIndices = pane.explorer.visibleEntryIndices;
         size_t totalRows = visibleIndices.size();
 
-        size_t startRow = (pane.scrollOffsetY > 0.0f) ? static_cast<size_t>(pane.scrollOffsetY / rowH) : 0;
+        float maxScroll = (totalRows > 0 && static_cast<float>(totalRows) * rowH > listH)
+            ? (static_cast<float>(totalRows) * rowH - listH)
+            : 0.0f;
+        if (pane.scrollOffsetY > maxScroll) {
+            pane.scrollOffsetY = maxScroll;
+        }
+        if (pane.scrollOffsetY < 0.0f) {
+            pane.scrollOffsetY = 0.0f;
+        }
+
+        size_t startRow = static_cast<size_t>(pane.scrollOffsetY / rowH);
         size_t maxVisibleRows = static_cast<size_t>(listH / rowH) + 2;
         size_t endRow = (std::min)(totalRows, startRow + maxVisibleRows);
 
@@ -5828,15 +6005,27 @@ public:
                 pRenderTarget->FillRectangle(wizBar, pSolidBrush);
             }
 
-            // Icon
-            std::string icon = "file.png";
-            if (entry.isDirectory) icon = "folder_16.png";
-            else if (entry.isArchiveOrGameContainer) icon = "layers_16.png";
-            else if (entry.extension == L".exe" || entry.extension == L".dll" || entry.extension == L".xex") icon = "exe.png";
-            else if (entry.extension == L".png" || entry.extension == L".jpg" || entry.extension == L".dds" || entry.extension == L".tim") icon = "image.png";
-            else if (entry.extension == L".wav" || entry.extension == L".mp3" || entry.extension == L".ogg" || entry.extension == L".adx") icon = "sparkles_16.png";
-            else if (entry.extension == L".mp4" || entry.extension == L".mkv" || entry.extension == L".bik") icon = "clock_16.png";
-            else if (entry.extension == L".glb" || entry.extension == L".gltf" || entry.extension == L".obj") icon = "layers_16.png";
+            // Icon mapping to existing high-quality sprites
+            std::string icon = "file_16.png";
+            if (entry.isDirectory) {
+                icon = entry.isParentDirectoryEntry ? "folder_up_16.png" : "folder_16.png";
+            } else if (entry.isArchiveOrGameContainer) {
+                icon = "gba_cartridge.png";
+            } else if (entry.extension == L".exe" || entry.extension == L".dll" || entry.extension == L".xex" || entry.extension == L".sys") {
+                icon = "exe_16.png";
+            } else if (entry.extension == L".png" || entry.extension == L".jpg" || entry.extension == L".jpeg" || entry.extension == L".dds" || entry.extension == L".tim" || entry.extension == L".bmp" || entry.extension == L".webp") {
+                icon = "image_16.png";
+            } else if (entry.extension == L".wav" || entry.extension == L".mp3" || entry.extension == L".ogg" || entry.extension == L".adx" || entry.extension == L".flac" || entry.extension == L".swav") {
+                icon = "audio_speaker.png";
+            } else if (entry.extension == L".mp4" || entry.extension == L".mkv" || entry.extension == L".bik" || entry.extension == L".bk2" || entry.extension == L".avi") {
+                icon = "crt_monitor.png";
+            } else if (entry.extension == L".glb" || entry.extension == L".gltf" || entry.extension == L".obj") {
+                icon = "ia_chip.png";
+            } else if (entry.extension == L".bat" || entry.extension == L".cmd" || entry.extension == L".ps1" || entry.extension == L".sh" || entry.extension == L".py" || entry.extension == L".js" || entry.extension == L".ts") {
+                icon = "file_script_16.png";
+            } else if (entry.extension == L".txt" || entry.extension == L".log" || entry.extension == L".json" || entry.extension == L".xml" || entry.extension == L".ini" || entry.extension == L".cfg" || entry.extension == L".md") {
+                icon = "file_text_16.png";
+            }
 
             D2D1_RECT_F icR = D2D1::RectF(px + 8.0f, curRowY + 3.0f, px + 24.0f, curRowY + 19.0f);
             SpriteAtlas::Instance().DrawSpriteCentered(pRenderTarget, icon, icR, 14.0f, 14.0f);
@@ -5924,6 +6113,7 @@ public:
                     pane.exp3DWireframeBtnRect = D2D1::RectF(prevArea.left, prevArea.top, prevArea.left + 70.0f, prevArea.top + 20.0f);
                     pane.exp3DAutoRotBtnRect = D2D1::RectF(prevArea.left + 74.0f, prevArea.top, prevArea.left + 150.0f, prevArea.top + 20.0f);
                     pane.exp3DResetBtnRect = D2D1::RectF(prevArea.left + 154.0f, prevArea.top, prevArea.left + 224.0f, prevArea.top + 20.0f);
+                    pane.exp3DFlipVBtnRect = D2D1::RectF(prevArea.left + 228.0f, prevArea.top, prevArea.left + 288.0f, prevArea.top + 20.0f);
 
                     auto draw3DControl = [&](const D2D1_RECT_F& r, const std::wstring& lbl, bool act) {
                         pSolidBrush->SetColor(act ? ColorHex(0x223244) : ColorHex(0x181822));
@@ -5936,6 +6126,7 @@ public:
                     draw3DControl(pane.exp3DWireframeBtnRect, L"Wireframe", preview3D.IsWireframe());
                     draw3DControl(pane.exp3DAutoRotBtnRect, L"Auto-Rotate", preview3D.IsAutoRotate());
                     draw3DControl(pane.exp3DResetBtnRect, L"Reset Cam", false);
+                    draw3DControl(pane.exp3DFlipVBtnRect, L"Flip V", preview3D.IsFlipTextureV());
 
                     // 3D Viewport
                     pane.expViewport3DRect = D2D1::RectF(prevArea.left, prevArea.top + 24.0f, prevArea.right, prevArea.bottom - 40.0f);
@@ -5992,12 +6183,35 @@ public:
                         DrawText(lbl, r.left + 10.0f, r.top + 6.0f, ColorHex(0xF0F0FF), pUIFormatBold);
                     };
 
-                    drawAudioBtn(pane.expActionPlayAudioBtnRect, audioPlayer.IsPlaying() ? L"Pause" : L"Play");
+                    drawAudioBtn(pane.expActionPlayAudioBtnRect, audioPlayer.IsPlaying() ? L"Pause" : (audioPlayer.IsPaused() ? L"Resume" : L"Play"));
                     drawAudioBtn(pane.expActionStopAudioBtnRect, L"Stop");
 
+                    // Audio time label
+                    double curSec = audioPlayer.GetPositionSeconds();
+                    double durSec = audioPlayer.GetDurationSeconds();
+                    wchar_t timeBuf[64];
+                    int cM = static_cast<int>(curSec) / 60, cS = static_cast<int>(curSec) % 60;
+                    int dM = static_cast<int>(durSec) / 60, dS = static_cast<int>(durSec) % 60;
+                    swprintf_s(timeBuf, L"%02d:%02d / %02d:%02d", cM, cS, dM, dS);
+                    DrawText(timeBuf, prevArea.left + 140.0f, prevArea.top + 19.0f, ColorHex(0xCBD5E1), pUIFormatSmall);
+
+                    // Audio Scrubber / Seekbar
+                    pane.expActionAudioSeekRect = D2D1::RectF(prevArea.left + 14.0f, prevArea.top + 48.0f, prevArea.right - 14.0f, prevArea.top + 54.0f);
+                    pSolidBrush->SetColor(ColorHex(0x28283A));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expActionAudioSeekRect, 3.0f, 3.0f), pSolidBrush);
+                    float progFrac = (durSec > 0.0) ? static_cast<float>(curSec / durSec) : 0.0f;
+                    progFrac = (std::clamp)(progFrac, 0.0f, 1.0f);
+                    float seekFillW = (pane.expActionAudioSeekRect.right - pane.expActionAudioSeekRect.left) * progFrac;
+                    D2D1_RECT_F fillR = D2D1::RectF(pane.expActionAudioSeekRect.left, pane.expActionAudioSeekRect.top, pane.expActionAudioSeekRect.left + seekFillW, pane.expActionAudioSeekRect.bottom);
+                    pSolidBrush->SetColor(ColorHex(0x8B5CF6));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(fillR, 3.0f, 3.0f), pSolidBrush);
+                    D2D1_ELLIPSE thumb = D2D1::Ellipse(D2D1::Point2F(pane.expActionAudioSeekRect.left + seekFillW, (pane.expActionAudioSeekRect.top + pane.expActionAudioSeekRect.bottom) * 0.5f), 5.0f, 5.0f);
+                    pSolidBrush->SetColor(ColorHex(0xFFFFFF));
+                    pRenderTarget->FillEllipse(thumb, pSolidBrush);
+
                     // Real-time 64-bar Waveform
-                    float waveY = prevArea.top + 60.0f;
-                    float waveH = (std::min)(120.0f, prevArea.bottom - waveY - 40.0f);
+                    float waveY = prevArea.top + 64.0f;
+                    float waveH = (std::min)(110.0f, prevArea.bottom - waveY - 24.0f);
                     float barW = (prevArea.right - prevArea.left - 28.0f) / 64.0f;
                     for (int b = 0; b < 64; ++b) {
                         float peak = (std::clamp)(audioPlayer.waveformPeaks[b], 0.05f, 1.0f);
@@ -6007,11 +6221,63 @@ public:
                         pRenderTarget->FillRectangle(barR, pSolidBrush);
                     }
                 } else if (pane.explorerPreviewIsVideo) {
-                    float vW = 0.0f, vH = 0.0f;
                     ID2D1Bitmap* vBmp = previewMediaEngine.GetCurrentBitmap();
+                    float ctrlBarH = 48.0f;
+                    D2D1_RECT_F videoArea = D2D1::RectF(prevArea.left, prevArea.top, prevArea.right, prevArea.bottom - ctrlBarH);
                     if (vBmp) {
-                        pRenderTarget->DrawBitmap(vBmp, prevArea);
+                        D2D1_SIZE_F sz = vBmp->GetSize();
+                        float fitScale = (std::min)((videoArea.right - videoArea.left) / (sz.width > 0 ? sz.width : 1.0f),
+                                                    (videoArea.bottom - videoArea.top) / (sz.height > 0 ? sz.height : 1.0f));
+                        float dstW = sz.width * fitScale;
+                        float dstH = sz.height * fitScale;
+                        float dstX = videoArea.left + ((videoArea.right - videoArea.left) - dstW) * 0.5f;
+                        float dstY = videoArea.top + ((videoArea.bottom - videoArea.top) - dstH) * 0.5f;
+                        D2D1_RECT_F dstR = D2D1::RectF(dstX, dstY, dstX + dstW, dstY + dstH);
+                        pRenderTarget->DrawBitmap(vBmp, dstR);
+                    } else {
+                        DrawText(L"Video Decoder Active - Initializing Stream...", prevArea.left + 10.0f, prevArea.top + 20.0f, ColorHex(0x64748B), pUIFormat);
                     }
+
+                    // Video Control Bar
+                    D2D1_RECT_F ctrlR = D2D1::RectF(prevArea.left, prevArea.bottom - ctrlBarH, prevArea.right, prevArea.bottom);
+                    pSolidBrush->SetColor(ColorHex(0x12121A));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(ctrlR, 4.0f, 4.0f), pSolidBrush);
+
+                    pane.expActionPlayVideoBtnRect = D2D1::RectF(ctrlR.left + 8.0f, ctrlR.top + 14.0f, ctrlR.left + 68.0f, ctrlR.top + 40.0f);
+                    pane.expActionStopVideoBtnRect = D2D1::RectF(ctrlR.left + 74.0f, ctrlR.top + 14.0f, ctrlR.left + 128.0f, ctrlR.top + 40.0f);
+
+                    auto drawVideoBtn = [&](const D2D1_RECT_F& r, const std::wstring& lbl) {
+                        pSolidBrush->SetColor(PtInD2D1Rect(r, mousePos) ? ColorHex(0x28283C) : ColorHex(0x1C1C28));
+                        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush);
+                        pSolidBrush->SetColor(ColorHex(0x38384E));
+                        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(r, 4.0f, 4.0f), pSolidBrush, 1.0f);
+                        DrawText(lbl, r.left + 8.0f, r.top + 5.0f, ColorHex(0xF0F0FF), pUIFormatBold);
+                    };
+
+                    drawVideoBtn(pane.expActionPlayVideoBtnRect, previewMediaEngine.IsPaused() ? L"Play" : L"Pause");
+                    drawVideoBtn(pane.expActionStopVideoBtnRect, L"Stop");
+
+                    double vCurSec = previewMediaEngine.GetPositionSeconds();
+                    double vDurSec = previewMediaEngine.GetDurationSeconds();
+                    wchar_t vTimeBuf[64];
+                    int vcM = static_cast<int>(vCurSec) / 60, vcS = static_cast<int>(vCurSec) % 60;
+                    int vdM = static_cast<int>(vDurSec) / 60, vdS = static_cast<int>(vDurSec) % 60;
+                    swprintf_s(vTimeBuf, L"%02d:%02d / %02d:%02d", vcM, vcS, vdM, vdS);
+                    DrawText(vTimeBuf, ctrlR.left + 138.0f, ctrlR.top + 18.0f, ColorHex(0xCBD5E1), pUIFormatSmall);
+
+                    // Video Seekbar
+                    pane.expActionVideoSeekRect = D2D1::RectF(ctrlR.left + 8.0f, ctrlR.top + 4.0f, ctrlR.right - 8.0f, ctrlR.top + 10.0f);
+                    pSolidBrush->SetColor(ColorHex(0x28283A));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(pane.expActionVideoSeekRect, 3.0f, 3.0f), pSolidBrush);
+                    float vProgFrac = (vDurSec > 0.0) ? static_cast<float>(vCurSec / vDurSec) : 0.0f;
+                    vProgFrac = (std::clamp)(vProgFrac, 0.0f, 1.0f);
+                    float vSeekW = (pane.expActionVideoSeekRect.right - pane.expActionVideoSeekRect.left) * vProgFrac;
+                    D2D1_RECT_F vFillR = D2D1::RectF(pane.expActionVideoSeekRect.left, pane.expActionVideoSeekRect.top, pane.expActionVideoSeekRect.left + vSeekW, pane.expActionVideoSeekRect.bottom);
+                    pSolidBrush->SetColor(ColorHex(0x3B82F6));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(vFillR, 3.0f, 3.0f), pSolidBrush);
+                    D2D1_ELLIPSE vThumb = D2D1::Ellipse(D2D1::Point2F(pane.expActionVideoSeekRect.left + vSeekW, (pane.expActionVideoSeekRect.top + pane.expActionVideoSeekRect.bottom) * 0.5f), 4.0f, 4.0f);
+                    pSolidBrush->SetColor(ColorHex(0xFFFFFF));
+                    pRenderTarget->FillEllipse(vThumb, pSolidBrush);
                 } else if (pane.explorerPreviewBitmap) {
                     D2D1_SIZE_F sz = pane.explorerPreviewBitmap->GetSize();
                     float fitScale = (std::min)((prevArea.right - prevArea.left) / sz.width, (prevArea.bottom - prevArea.top - 24.0f) / sz.height);
@@ -6023,51 +6289,64 @@ public:
                     std::wstring dim = pane.explorerPreviewImageFormat + L" - " + std::to_wstring(static_cast<int>(sz.width)) + L"x" + std::to_wstring(static_cast<int>(sz.height));
                     DrawText(dim, prevArea.left, prevArea.bottom - 18.0f, ColorHex(0x94A3B8), pUIFormatSmall);
                 } else if (!pane.explorerPreviewTextLines.empty()) {
-                    float txtY = prevArea.top;
-                    for (size_t l = 0; l < pane.explorerPreviewTextLines.size() && txtY < prevArea.bottom; ++l) {
-                        DrawText(pane.explorerPreviewTextLines[l], prevArea.left, txtY, ColorHex(0xCBD5E1), pUIFormatSmall);
+                    pRenderTarget->PushAxisAlignedClip(prevArea, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    float txtY = prevArea.top - pane.explorerPreviewScrollY;
+                    for (size_t l = 0; l < pane.explorerPreviewTextLines.size(); ++l) {
+                        if (txtY + 16.0f >= prevArea.top && txtY <= prevArea.bottom) {
+                            DrawText(pane.explorerPreviewTextLines[l], prevArea.left, txtY, ColorHex(0xCBD5E1), pUIFormatSmall);
+                        }
                         txtY += 16.0f;
+                        if (txtY > prevArea.bottom + 64.0f) break;
                     }
+                    pRenderTarget->PopAxisAlignedClip();
                 } else {
                     DrawText(I18n::Tr(L"Selecione um arquivo para pre-visualizar", L"Select a file to preview", L"Selecciona un archivo para vista previa"),
                              prevArea.left + 10.0f, prevArea.top + 20.0f, ColorHex(0x64748B), pUIFormat);
                 }
             } else if (pane.activeInspectorTab == 1) {
-                // TAB 1: HEX INSPECTOR
-                float hexY = prevArea.top;
+                // TAB 1: HEX INSPECTOR (With Scroll Support)
+                pRenderTarget->PushAxisAlignedClip(prevArea, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                float hexY = prevArea.top - pane.explorerPreviewScrollY;
                 const auto& bytes = pane.explorerPreviewRawBytes;
-                size_t maxRows = static_cast<size_t>((prevArea.bottom - prevArea.top - 60.0f) / 16.0f);
-                for (size_t r = 0; r < maxRows && (r * 16) < bytes.size(); ++r) {
-                    size_t off = r * 16;
-                    wchar_t offBuf[32];
-                    swprintf_s(offBuf, L"%08zX: ", off);
+                size_t totalHexRows = (bytes.size() + 15) / 16;
+                for (size_t r = 0; r < totalHexRows; ++r) {
+                    if (hexY + 16.0f >= prevArea.top && hexY <= prevArea.bottom) {
+                        size_t off = r * 16;
+                        wchar_t offBuf[32];
+                        swprintf_s(offBuf, L"%08zX: ", off);
 
-                    std::wstring hexStr = offBuf;
-                    std::wstring ascStr = L" | ";
-                    for (size_t b = 0; b < 16; ++b) {
-                        if (off + b < bytes.size()) {
-                            uint8_t byteVal = bytes[off + b];
-                            wchar_t bBuf[8];
-                            swprintf_s(bBuf, L"%02X ", byteVal);
-                            hexStr += bBuf;
-                            ascStr += (byteVal >= 32 && byteVal <= 126) ? static_cast<wchar_t>(byteVal) : L'.';
-                        } else {
-                            hexStr += L"   ";
+                        std::wstring hexStr = offBuf;
+                        std::wstring ascStr = L" | ";
+                        for (size_t b = 0; b < 16; ++b) {
+                            if (off + b < bytes.size()) {
+                                uint8_t byteVal = bytes[off + b];
+                                wchar_t bBuf[8];
+                                swprintf_s(bBuf, L"%02X ", byteVal);
+                                hexStr += bBuf;
+                                ascStr += (byteVal >= 32 && byteVal <= 126) ? static_cast<wchar_t>(byteVal) : L'.';
+                            } else {
+                                hexStr += L"   ";
+                            }
                         }
+                        DrawText(hexStr + ascStr, prevArea.left, hexY, ColorHex(0x94A3B8), pUIFormatSmall);
                     }
-                    DrawText(hexStr + ascStr, prevArea.left, hexY, ColorHex(0x94A3B8), pUIFormatSmall);
                     hexY += 16.0f;
+                    if (hexY > prevArea.bottom + 64.0f) break;
                 }
+                pRenderTarget->PopAxisAlignedClip();
             } else if (pane.activeInspectorTab == 2) {
-                // TAB 2: INFO / PE / CONTAINER
-                float infoY = prevArea.top;
+                // TAB 2: INFO / PE / CONTAINER (With Scroll Support)
+                pRenderTarget->PushAxisAlignedClip(prevArea, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                float infoY = prevArea.top - pane.explorerPreviewScrollY;
                 if (pane.explorer.inVirtualArchive && pane.explorer.activeArchive) {
                     DrawText(L"Archive: " + pane.explorer.activeArchive->formatName, prevArea.left, infoY, theme.accent, pUIFormatBold); infoY += 20.0f;
                     DrawText(L"Engine: " + pane.explorer.activeArchive->engineName, prevArea.left, infoY, ColorHex(0xF0F0FF), pUIFormat); infoY += 22.0f;
                     for (const auto& hf : pane.explorer.activeArchive->headerFields) {
-                        if (infoY > prevArea.bottom - 16.0f) break;
-                        DrawText(hf.label + L": " + hf.value, prevArea.left, infoY, ColorHex(0x94A3B8), pUIFormatSmall);
+                        if (infoY >= prevArea.top - 16.0f && infoY <= prevArea.bottom) {
+                            DrawText(hf.label + L": " + hf.value, prevArea.left, infoY, ColorHex(0x94A3B8), pUIFormatSmall);
+                        }
                         infoY += 16.0f;
+                        if (infoY > prevArea.bottom + 64.0f) break;
                     }
                 } else if (pane.explorerPreviewIsExecutable) {
                     DrawText(L"Arch: " + pane.explorerExeInfo.architecture, prevArea.left, infoY, theme.accent, pUIFormatBold); infoY += 18.0f;
@@ -6075,11 +6354,14 @@ public:
                     DrawText(L"Date: " + pane.explorerExeInfo.compileTimeFormatted, prevArea.left, infoY, ColorHex(0x94A3B8), pUIFormatSmall); infoY += 20.0f;
                     DrawText(L"Imported DLLs:", prevArea.left, infoY, ColorHex(0x8A8A9E), pUIFormatSmall); infoY += 16.0f;
                     for (const auto& dll : pane.explorerExeInfo.importedDlls) {
-                        if (infoY > prevArea.bottom - 16.0f) break;
-                        DrawText(dll.dllName, prevArea.left + 8.0f, infoY, dll.foundOnSystem ? ColorHex(0x4ADE80) : ColorHex(0xEF4444), pUIFormatSmall);
+                        if (infoY >= prevArea.top - 16.0f && infoY <= prevArea.bottom) {
+                            DrawText(dll.dllName, prevArea.left + 8.0f, infoY, dll.foundOnSystem ? ColorHex(0x4ADE80) : ColorHex(0xEF4444), pUIFormatSmall);
+                        }
                         infoY += 16.0f;
+                        if (infoY > prevArea.bottom + 64.0f) break;
                     }
                 }
+                pRenderTarget->PopAxisAlignedClip();
             }
         }
 
@@ -6108,6 +6390,76 @@ public:
             pSolidBrush->SetColor(PtInD2D1Rect(expTransferCancelRect, mousePos) ? ColorHex(0x7F1D1D) : ColorHex(0x450A0A));
             pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(expTransferCancelRect, 3.0f, 3.0f), pSolidBrush);
             DrawText(L"Cancel", expTransferCancelRect.left + 6.0f, tY + 4.0f, ColorHex(0xFCA5A5), pUIFormatSmall);
+        }
+    }
+
+    void RenderCustomContextMenu(const Theme& theme, CustomContextMenuState& menu, POINT mousePos, float windowW, float windowH) {
+        if (!pRenderTarget || !menu.isOpen || menu.items.empty()) return;
+
+        float itemH = 28.0f;
+        float sepH = 9.0f;
+        float menuW = 295.0f;
+        float totalH = 12.0f;
+        for (const auto& item : menu.items) {
+            totalH += item.isSeparator ? sepH : itemH;
+        }
+
+        float startX = static_cast<float>(menu.origin.x);
+        float startY = static_cast<float>(menu.origin.y);
+        if (startX + menuW > windowW - 8.0f) startX = (std::max)(8.0f, windowW - menuW - 8.0f);
+        if (startY + totalH > windowH - 8.0f) startY = (std::max)(8.0f, windowH - totalH - 8.0f);
+
+        menu.bounds = D2D1::RectF(startX, startY, startX + menuW, startY + totalH);
+
+        // Dark Acrylic Background with drop shadow & border
+        D2D1_RECT_F shadowR = D2D1::RectF(startX - 2.0f, startY - 2.0f, startX + menuW + 3.0f, startY + totalH + 3.0f);
+        pSolidBrush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.50f));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(shadowR, 10.0f, 10.0f), pSolidBrush);
+
+        pSolidBrush->SetColor(ColorHex(0x161622, 0.96f));
+        pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(menu.bounds, 8.0f, 8.0f), pSolidBrush);
+
+        pSolidBrush->SetColor(ColorHex(0x32324A, 0.85f));
+        pRenderTarget->DrawRoundedRectangle(D2D1::RoundedRect(menu.bounds, 8.0f, 8.0f), pSolidBrush, 1.0f);
+
+        float curY = startY + 6.0f;
+        for (size_t i = 0; i < menu.items.size(); ++i) {
+            auto& item = menu.items[i];
+            if (item.isSeparator) {
+                float sepY = curY + 4.0f;
+                item.rect = D2D1::RectF(startX + 10.0f, curY, startX + menuW - 10.0f, curY + sepH);
+                pSolidBrush->SetColor(ColorHex(0x28283E, 0.80f));
+                pRenderTarget->DrawLine(D2D1::Point2F(startX + 12.0f, sepY), D2D1::Point2F(startX + menuW - 12.0f, sepY), pSolidBrush, 1.0f);
+                curY += sepH;
+            } else {
+                item.rect = D2D1::RectF(startX + 5.0f, curY, startX + menuW - 5.0f, curY + itemH);
+                bool isHovered = (menu.hoveredIndex == static_cast<int>(i)) || PtInD2D1Rect(item.rect, mousePos);
+                if (isHovered) {
+                    menu.hoveredIndex = static_cast<int>(i);
+                    pSolidBrush->SetColor(item.isDanger ? ColorHex(0x5F1D1D, 0.85f) : ColorHex(0x2A2A40, 0.85f));
+                    pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(item.rect, 5.0f, 5.0f), pSolidBrush);
+                }
+
+                if (item.icon != 0) {
+                    wchar_t icBuf[2] = { item.icon, L'\0' };
+                    DrawText(std::wstring(icBuf), item.rect.left + 8.0f, curY + 5.0f,
+                             isHovered ? (item.isDanger ? ColorHex(0xF87171) : theme.accent)
+                                       : (item.isDanger ? ColorHex(0xEF4444) : theme.textDim),
+                             pUIFormat);
+                }
+
+                DrawText(item.label, item.rect.left + 32.0f, curY + 6.0f,
+                         isHovered ? (item.isDanger ? ColorHex(0xFCA5A5) : theme.textPrimary)
+                                   : (item.isDanger ? ColorHex(0xF87171) : theme.textPrimary),
+                         pUIFormatSmall);
+
+                if (!item.shortcut.empty()) {
+                    DrawText(item.shortcut, item.rect.right - 85.0f, curY + 7.0f,
+                             theme.textDim, pUIFormatSmall);
+                }
+
+                curY += itemH;
+            }
         }
     }
 

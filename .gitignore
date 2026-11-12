@@ -19,6 +19,7 @@ out/
 .vscode/
 .idea/
 AGENTS.md
+TODO.md
 tests/
 
 # Logs and temporary files
