@@ -7,14 +7,14 @@
   IgnorableNamespaces="uap rescap desktop">
 
   <Identity
-    Name="Spet001.SpetTerm"
-    Publisher="CN=Spet001"
+    Name="SpetGames.SpetTerm"
+    Publisher="CN=6B19D10C-B3BD-4A6B-B05E-9EBDB9EB62DD"
     Version="0.0.5.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Spet@Term</DisplayName>
-    <PublisherDisplayName>Spet001</PublisherDisplayName>
+    <PublisherDisplayName>SpetGames</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <Description>Modern GPU-Accelerated Terminal &amp; Universal Game File Explorer</Description>
   </Properties>

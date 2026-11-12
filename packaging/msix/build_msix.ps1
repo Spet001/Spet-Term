@@ -99,10 +99,25 @@ $CertPfx = "$PackagingDir\SpetTerm_Dev.pfx"
 $CertCer = "$PackagingDir\SpetTerm_Dev.cer"
 $CertPassword = "SpetTermDev123!"
 
+[xml]$manifestXml = Get-Content "$PackagingDir\AppxManifest.xml"
+$publisherDn = $manifestXml.Package.Identity.Publisher
+
 if ($Sign -and $SignToolPath) {
-    if (-not (Test-Path $CertPfx)) {
-        Write-Host "[CERT] Creating local development test certificate (CN=Spet001)..." -ForegroundColor Yellow
-        $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=Spet001" `
+    $needNewCert = $true
+    if (Test-Path $CertPfx) {
+        try {
+            $existingCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertPfx, $CertPassword)
+            if ($existingCert.Subject -eq $publisherDn) {
+                $needNewCert = $false
+            }
+        } catch {
+            $needNewCert = $true
+        }
+    }
+
+    if ($needNewCert) {
+        Write-Host "[CERT] Creating local development test certificate ($publisherDn)..." -ForegroundColor Yellow
+        $cert = New-SelfSignedCertificate -Type Custom -Subject "$publisherDn" `
             -KeyUsage DigitalSignature -FriendlyName "Spet@Term Dev Package Certificate" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
             -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
