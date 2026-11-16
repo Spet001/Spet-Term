@@ -8,7 +8,7 @@ Spet@term is a native Windows terminal emulator and micro-IDE written in C++20. 
 
 Spet@term targets Windows 10 (1809+) and Windows 11 systems. It eliminates dependencies on web runtimes, Node.js, and third-party UI frameworks by building directly against Win32, Direct2D 1.1, DirectWrite, Direct3D 11, and DirectComposition APIs.
 
-The executable compiles down to ~1.6 MB, requires 0 external runtime DLLs, and operates with an idle working set of ~3.6 MB.
+The executable compiles down to ~3.1 MB, requires 0 external runtime DLLs, and operates with an idle working set of ~10.5 MB (Without Animated Wallpaper).
 
 ## Interface Tour
 
@@ -41,6 +41,7 @@ In-app settings modal with live theme previews, eye-care warmth adjustment, prom
 - **Smart Error Doctor:** Pattern-matching diagnostics engine for Clang, GCC, MSVC, Python tracebacks, and Git merge conflicts with quick-fix keyboard triggers.
 - **Non-Client Frameless Window:** Custom `WM_NCCALCSIZE` and `WM_NCHITTEST` implementation preserving native DWM drop shadows, resize margins, and Windows 11 snap layouts.
 - **Quake Dropdown Mode:** Global hotkey (`F12` or `Alt+\``) dropdown terminal with smooth slide animation.
+- **Open 20+ Filetypes (Including Game Engine Specific ones!)**: RAR/ZIP/ISO, Xbox 360 ISO, MSIXVC/APPX, WAD/PD3, Call of Duty Fast Files (.ff) and more....
 
 ## Technical Specifications
 
